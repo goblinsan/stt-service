@@ -1,0 +1,42 @@
+services:
+  stt-api:
+    build:
+      context: apps/stt-api
+      dockerfile: Dockerfile
+    volumes:
+      - ${STT_MODEL_DIR:-./data/models}:/data/models
+    environment:
+      - STT_MODEL_SIZE=${STT_MODEL_SIZE:-large-v3}
+      - STT_DEVICE=${STT_DEVICE:-auto}
+      - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-auto}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5100/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  stt-ui:
+    build:
+      context: apps/stt-ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "${HOST_PORT:-5101}:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - stt-api
+      - stt-ui
+    restart: unless-stopped
