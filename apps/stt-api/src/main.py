@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALLOWED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", ".aac", ".wma"}
+ALLOWED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", ".aac", ".wma", ".aif", ".aiff"}
 
 
 @app.on_event("startup")
