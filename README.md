@@ -140,6 +140,17 @@ python scripts/benchmark.py --diarize --runs 3 sample_30s.wav sample_2min.wav
 The script reports per-run breakdown (`whisper_s`, `diarize_s`, realtime
 factor) and flags whether diarization overhead stays within the < 50% target.
 
+## Downstream integration
+
+The STT service exposes a stable, versioned API for downstream consumers. See
+the [docs/integration/](docs/integration/) directory for detailed contracts and
+examples:
+
+| Document | Description |
+|----------|-------------|
+| [gateway-api-workflow.md](docs/integration/gateway-api-workflow.md) | Request/response contract for a gateway-api workflow step that calls the STT service with `diarize=true`. Includes full example payloads, diarized transcript shape, and speaker summary. |
+| [chat-platform-agent.md](docs/integration/chat-platform-agent.md) | API examples, constraints, and follow-up notes for a chat-platform agent tool that transcribes uploaded audio with speaker attribution. |
+
 ## Control-plane integration
 
 Deploy as a remote workload to a GPU node registered in `gateway-control-plane`.
