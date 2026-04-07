@@ -149,7 +149,196 @@ def generate_report(metrics_list: List[dict]) -> str:
 
     lines.append("")
 
+    # -------------------------------------------------------------------------
+    # Section 4 — Analysis: best-in-class and dominated engines
+    # -------------------------------------------------------------------------
+    lines.extend(_generate_analysis_section(metrics_list))
+
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Analysis helpers (issue #13)
+# ---------------------------------------------------------------------------
+
+def _generate_analysis_section(metrics_list: List[dict]) -> List[str]:
+    """Generate a Markdown analysis section from a list of engine metrics.
+
+    Identifies:
+    * Best overall WER
+    * Best speed (highest RTF avg)
+    * Best VRAM efficiency (lowest VRAM peak)
+    * Best diarization-pairing candidate (lowest VRAM among diarize-ready
+      engines that also support word timestamps)
+    * Strictly dominated engines (worse than some other engine on *all* axes)
+
+    Returns a list of Markdown lines to be joined by ``\\n``.
+    """
+    lines: List[str] = []
+    lines.append("## Analysis")
+    lines.append("")
+
+    if not metrics_list:
+        lines.append("No data available for analysis.")
+        lines.append("")
+        return lines
+
+    def _label(m: dict) -> str:
+        return f"{m.get('engine', '?')} / {m.get('model', '?')}"
+
+    # --- Best WER -----------------------------------------------------------
+    wer_candidates = [m for m in metrics_list if m.get("wer_avg") is not None]
+    if wer_candidates:
+        best_wer = min(wer_candidates, key=lambda m: m["wer_avg"])
+        lines.append(
+            f"**Best WER:** {_label(best_wer)} "
+            f"(WER avg = {_fmt_float(best_wer.get('wer_avg'), decimals=3)})"
+        )
+    else:
+        lines.append("**Best WER:** — (no WER data available)")
+
+    # --- Best speed (RTF) ---------------------------------------------------
+    rtf_candidates = [m for m in metrics_list if m.get("rtf_avg") is not None]
+    if rtf_candidates:
+        best_rtf = max(rtf_candidates, key=lambda m: m["rtf_avg"])
+        lines.append(
+            f"**Best Speed (RTF):** {_label(best_rtf)} "
+            f"(RTF avg = {_fmt_float(best_rtf.get('rtf_avg'), decimals=2)}x)"
+        )
+    else:
+        lines.append("**Best Speed (RTF):** — (no RTF data available)")
+
+    # --- Best VRAM efficiency -----------------------------------------------
+    vram_candidates = [m for m in metrics_list if m.get("vram_peak_mb") is not None]
+    if vram_candidates:
+        best_vram = min(vram_candidates, key=lambda m: m["vram_peak_mb"])
+        lines.append(
+            f"**Best VRAM Efficiency:** {_label(best_vram)} "
+            f"(peak = {_fmt_int(best_vram.get('vram_peak_mb'))} MiB)"
+        )
+    else:
+        lines.append("**Best VRAM Efficiency:** — (no VRAM data available)")
+
+    # --- Best diarization-pairing candidate ---------------------------------
+    # Criteria: diarization_ready AND word_timestamps, then lowest VRAM
+    diar_candidates = [
+        m for m in metrics_list
+        if m.get("diarization_ready") and m.get("word_timestamps")
+    ]
+    diar_with_vram = [m for m in diar_candidates if m.get("vram_peak_mb") is not None]
+    if diar_with_vram:
+        best_diar = min(diar_with_vram, key=lambda m: m["vram_peak_mb"])
+        lines.append(
+            f"**Best Diarization Pairing:** {_label(best_diar)} "
+            f"(low VRAM + word timestamps; peak = {_fmt_int(best_diar.get('vram_peak_mb'))} MiB)"
+        )
+    elif diar_candidates:
+        # No VRAM data — pick lowest WER among diarize-ready engines
+        diar_wer = [m for m in diar_candidates if m.get("wer_avg") is not None]
+        if diar_wer:
+            best_diar = min(diar_wer, key=lambda m: m["wer_avg"])
+            lines.append(
+                f"**Best Diarization Pairing:** {_label(best_diar)} "
+                f"(diarize-ready + word timestamps; best WER = "
+                f"{_fmt_float(best_diar.get('wer_avg'), decimals=3)})"
+            )
+        else:
+            lines.append(
+                f"**Best Diarization Pairing:** {_label(diar_candidates[0])} "
+                f"(diarize-ready + word timestamps)"
+            )
+    else:
+        lines.append(
+            "**Best Diarization Pairing:** — "
+            "(no engine is both diarize-ready and supports word timestamps)"
+        )
+
+    lines.append("")
+
+    # --- Dominated engines --------------------------------------------------
+    dominated = _find_dominated_engines(metrics_list)
+    if dominated:
+        lines.append("### Strictly Dominated Engines")
+        lines.append("")
+        lines.append(
+            "The following engines are *strictly dominated* — "
+            "there exists at least one other engine that is better (or equal) "
+            "on every measured axis (WER, RTF, VRAM) and strictly better on at least one:"
+        )
+        lines.append("")
+        for dom_label, dom_by_label in dominated:
+            lines.append(f"- **{dom_label}** dominated by **{dom_by_label}**")
+        lines.append("")
+    else:
+        lines.append(
+            "_No engine is strictly dominated on all measured axes._"
+        )
+        lines.append("")
+
+    return lines
+
+
+def _find_dominated_engines(metrics_list: List[dict]) -> List[tuple]:
+    """Return ``(dominated_label, dominated_by_label)`` pairs.
+
+    An engine A is strictly dominated by engine B when:
+    * B has WER ≤ A (lower is better) — or either is missing WER
+    * B has RTF ≥ A (higher is better) — or either is missing RTF
+    * B has VRAM ≤ A (lower is better) — or either is missing VRAM
+    * B is strictly better than A on *at least one* of the three axes where
+      both have data.
+
+    Engines with no data on any axis cannot be dominated.
+    """
+    dominated: List[tuple] = []
+    for i, a in enumerate(metrics_list):
+        a_label = f"{a.get('engine', '?')} / {a.get('model', '?')}"
+        for j, b in enumerate(metrics_list):
+            if i == j:
+                continue
+            b_label = f"{b.get('engine', '?')} / {b.get('model', '?')}"
+            if _dominates(b, a):
+                dominated.append((a_label, b_label))
+                break  # first dominator is enough
+    return dominated
+
+
+def _dominates(b: dict, a: dict) -> bool:
+    """Return True when *b* dominates *a* on all shared axes."""
+    axes_compared = 0
+    strictly_better = False
+
+    # WER: lower is better
+    a_wer = a.get("wer_avg")
+    b_wer = b.get("wer_avg")
+    if a_wer is not None and b_wer is not None:
+        if b_wer > a_wer:
+            return False
+        axes_compared += 1
+        if b_wer < a_wer:
+            strictly_better = True
+
+    # RTF: higher is better
+    a_rtf = a.get("rtf_avg")
+    b_rtf = b.get("rtf_avg")
+    if a_rtf is not None and b_rtf is not None:
+        if b_rtf < a_rtf:
+            return False
+        axes_compared += 1
+        if b_rtf > a_rtf:
+            strictly_better = True
+
+    # VRAM: lower is better
+    a_vram = a.get("vram_peak_mb")
+    b_vram = b.get("vram_peak_mb")
+    if a_vram is not None and b_vram is not None:
+        if b_vram > a_vram:
+            return False
+        axes_compared += 1
+        if b_vram < a_vram:
+            strictly_better = True
+
+    return axes_compared > 0 and strictly_better
 
 
 # ---------------------------------------------------------------------------
