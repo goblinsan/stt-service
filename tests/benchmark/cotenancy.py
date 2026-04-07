@@ -176,6 +176,8 @@ class _VramTenant:
 
     def _allocate(self) -> None:
         try:
+            # Deferred import: torch is optional; omitting it lets the benchmark
+            # run on CPU-only machines without CUDA installed.
             import torch  # noqa: PLC0415
 
             if not torch.cuda.is_available():
@@ -185,7 +187,7 @@ class _VramTenant:
             n_elements = self._vram_mb * (1024 * 1024) // 4
             self._tensor = torch.zeros(n_elements, dtype=torch.float32, device="cuda")
             logger.debug("Co-tenant allocated ~%d MiB of VRAM", self._vram_mb)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — allocation failure is non-fatal; scenario runs without contention
             logger.warning(
                 "Could not allocate %d MiB VRAM for co-tenant: %s",
                 self._vram_mb,
@@ -199,11 +201,12 @@ class _VramTenant:
             self._tensor = None
         gc.collect()
         try:
+            # Deferred import: graceful no-op when torch/CUDA is absent.
             import torch  # noqa: PLC0415
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — graceful no-op when torch is absent
             pass
 
 
@@ -322,7 +325,7 @@ class CoTenancyBenchmark:
                     run_result.wall_time / prior_baseline_wt, 3
                 )
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — all inference failures classified and recorded
             outcome = OutcomeKind.OOM if _is_oom_error(exc) else OutcomeKind.ERROR
             base_result.outcome = outcome
             base_result.error_type = type(exc).__name__
@@ -373,7 +376,7 @@ class CoTenancyBenchmark:
                     logger.info(
                         "  Loaded %s/%s in %.1f s", adapter.name, model_size, load_time
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 — model load failures are recorded per-scenario
                     logger.warning(
                         "  FAILED to load %s/%s for scenario '%s': %s",
                         cfg["cls"].name,
@@ -413,14 +416,15 @@ class CoTenancyBenchmark:
                 # Unload before next scenario so VRAM is clean.
                 try:
                     adapter.unload()
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 — graceful no-op if unload fails
                     pass
                 gc.collect()
                 try:
+                    # Deferred import: graceful no-op when torch/CUDA is absent.
                     import torch  # noqa: PLC0415
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 — graceful no-op when torch is absent
                     pass
 
         return suite

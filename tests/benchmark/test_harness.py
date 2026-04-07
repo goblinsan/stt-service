@@ -1065,6 +1065,8 @@ class TestFullBenchmarkSuite:
         name = "stub-success"
 
         def __init__(self, **kwargs):
+            # **kwargs absorbs adapter-config keywords (model_size, device)
+            # not used by this test stub.
             super().__init__()
 
         def load(self) -> float:
@@ -1074,6 +1076,7 @@ class TestFullBenchmarkSuite:
         name = "stub-failing"
 
         def __init__(self, **kwargs):
+            # **kwargs absorbs adapter-config keywords not used by this stub.
             super().__init__()
 
         def load(self) -> float:
@@ -1086,6 +1089,7 @@ class TestFullBenchmarkSuite:
         name = "stub-load-fail"
 
         def __init__(self, **kwargs):
+            # **kwargs absorbs adapter-config keywords not used by this stub.
             super().__init__()
 
         def load(self) -> float:

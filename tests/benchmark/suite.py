@@ -163,11 +163,13 @@ def _clear_gpu_memory() -> None:
     """
     gc.collect()
     try:
+        # Deferred import: torch is optional; omitting it lets the benchmark
+        # run on CPU-only machines without installing PyTorch.
         import torch  # noqa: PLC0415
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — graceful no-op when torch is absent
         pass
 
 
@@ -249,7 +251,7 @@ class FullBenchmarkSuite:
             logger.info(
                 "  Model loaded in %.1f s", model_load_time
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — any load failure is recorded and skipped
             _record_failure(
                 suite_result,
                 adapter_name=config.adapter_cls.name,
@@ -286,7 +288,7 @@ class FullBenchmarkSuite:
                     result.rtf if result.rtf is not None else float("nan"),
                     result.wall_time,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — per-sample failures are recorded and skipped
                 _record_failure(
                     suite_result,
                     adapter_name=adapter.name,
