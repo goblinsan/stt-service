@@ -9,7 +9,7 @@ Adapters handle engine-specific setup, model loading, and teardown.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 
@@ -72,7 +72,7 @@ class BaseAdapter(ABC):
     name: str = "unknown"
 
     #: Feature support declaration — override in subclass.
-    features: FeatureSupport = field(default_factory=FeatureSupport)
+    features: FeatureSupport = FeatureSupport()
 
     @abstractmethod
     def load(self) -> float:

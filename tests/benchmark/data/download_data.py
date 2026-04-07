@@ -108,15 +108,26 @@ def _download_stream(url: str, dest: Path, *, timeout: int = 120) -> None:
 
 def _extract_librispeech_utterance(
     archive_path: Path,
+    subset: str,
     reader: str,
     chapter: str,
     utterance: str,
     dest_wav: Path,
     dest_txt: Path,
 ) -> None:
-    """Extract a single utterance from a LibriSpeech tar.gz archive."""
-    wav_member = f"LibriSpeech/{archive_path.stem.split('.')[0]}/{reader}/{chapter}/{reader}-{chapter}-{utterance}.flac"
-    txt_member = f"LibriSpeech/{archive_path.stem.split('.')[0]}/{reader}/{chapter}/{reader}-{chapter}.trans.txt"
+    """Extract a single utterance from a LibriSpeech tar.gz archive.
+
+    Args:
+        archive_path: Path to the downloaded ``test-clean.tar.gz`` or
+            ``test-other.tar.gz`` file.
+        subset: LibriSpeech subset name (e.g. ``"test-clean"``), used as the
+            subdirectory name inside the archive.
+        reader, chapter, utterance: LibriSpeech utterance identifiers.
+        dest_wav: Destination ``.wav`` (or ``.flac`` fallback) path.
+        dest_txt: Destination ``.txt`` transcript path.
+    """
+    wav_member = f"LibriSpeech/{subset}/{reader}/{chapter}/{reader}-{chapter}-{utterance}.flac"
+    txt_member = f"LibriSpeech/{subset}/{reader}/{chapter}/{reader}-{chapter}.trans.txt"
 
     with tarfile.open(archive_path, "r:gz") as tf:
         try:
@@ -151,7 +162,8 @@ def _extract_librispeech_utterance(
             raise ValueError(f"Transcript line not found for key: {key}")
 
 
-def _print_common_voice_instructions(missing_ids: list[str]) -> None:
+def _print_common_voice_instructions(missing_ids: list[str], manifest: dict) -> None:
+    samples_by_id = {s["id"]: s for s in manifest["samples"]}
     print()
     print("=" * 70)
     print("MANUAL DOWNLOAD REQUIRED — Mozilla Common Voice")
@@ -161,9 +173,7 @@ def _print_common_voice_instructions(missing_ids: list[str]) -> None:
     print("dataset download from https://commonvoice.mozilla.org/datasets")
     print()
     for sid in missing_ids:
-        with MANIFEST_PATH.open(encoding="utf-8") as fh:
-            manifest = json.load(fh)
-        sample = next((s for s in manifest["samples"] if s["id"] == sid), None)
+        sample = samples_by_id.get(sid)
         if sample:
             print(f"  {sid}: {sample.get('description', '')} ({sample.get('language', '')})")
     print()
@@ -172,9 +182,7 @@ def _print_common_voice_instructions(missing_ids: list[str]) -> None:
     print()
     print("Expected filenames:")
     for sid in missing_ids:
-        with MANIFEST_PATH.open(encoding="utf-8") as fh:
-            manifest = json.load(fh)
-        sample = next((s for s in manifest["samples"] if s["id"] == sid), None)
+        sample = samples_by_id.get(sid)
         if sample:
             print(f"  {sample['filename']}  ←→  {sample['reference']}")
     print()
@@ -256,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
 
             print(f"  Extracting {sid} …", end=" ", flush=True)
             _extract_librispeech_utterance(
-                archive_path, reader, chapter, utterance, wav_path, txt_path
+                archive_path, archive_key, reader, chapter, utterance, wav_path, txt_path
             )
             print("done")
         except Exception as exc:  # noqa: BLE001
@@ -264,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
             errors += 1
 
     if missing_cv:
-        _print_common_voice_instructions(missing_cv)
+        _print_common_voice_instructions(missing_cv, manifest)
 
     if not args.dry_run:
         # Summary
