@@ -1,14 +1,14 @@
+import asyncio
 import logging
 import os
 import tempfile
-import time
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .engine import get_device_info, get_model, is_model_loaded, transcribe_audio
-from .models import HealthResponse, ModelInfo, TranscribeResult
+from .models import DiarizationInfo, HealthResponse, ModelInfo, TranscribeResult
 
 logger = logging.getLogger("stt.api")
 
@@ -26,12 +26,45 @@ ALLOWED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", 
 
 @app.on_event("startup")
 async def startup():
-    logger.info("STT API starting — model will load on first request")
+    logger.info("STT API starting — warming up models in background")
+
+    async def _load_whisper():
+        try:
+            await asyncio.to_thread(get_model)
+            logger.info("Whisper model warmup complete")
+        except Exception:
+            logger.exception("Whisper model warmup failed")
+
+    async def _load_pyannote():
+        if not settings.hf_token:
+            return
+        from .diarization import get_pipeline
+        try:
+            await asyncio.to_thread(
+                get_pipeline,
+                settings.hf_token,
+                settings.model_cache_dir,
+                settings.pyannote_model,
+            )
+            logger.info("Pyannote pipeline warmup complete")
+        except Exception:
+            logger.exception("Pyannote pipeline warmup failed")
+
+    asyncio.create_task(_load_whisper())
+    asyncio.create_task(_load_pyannote())
 
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health():
+    from .diarization import is_pipeline_loaded
+
     device, compute_type = get_device_info()
+    diarization_info: DiarizationInfo | None = None
+    if settings.hf_token:
+        diarization_info = DiarizationInfo(
+            model=settings.pyannote_model,
+            ready=is_pipeline_loaded(),
+        )
     return HealthResponse(
         status="ok",
         version="0.1.0",
@@ -40,12 +73,15 @@ async def health():
             device=device,
             compute_type=compute_type,
             ready=is_model_loaded(),
+            diarization=diarization_info,
         ),
     )
 
 
 @app.get("/api/info")
 async def info():
+    from .diarization import is_pipeline_loaded
+
     device, compute_type = get_device_info()
     gpu_info = None
     try:
@@ -66,6 +102,11 @@ async def info():
         "model_loaded": is_model_loaded(),
         "gpu": gpu_info,
         "max_upload_mb": settings.max_upload_mb,
+        "diarization": {
+            "available": bool(settings.hf_token),
+            "model": settings.pyannote_model,
+            "ready": is_pipeline_loaded(),
+        },
     }
 
 
@@ -76,6 +117,7 @@ async def transcribe(
     task: str = Form("transcribe"),
     word_timestamps: bool = Form(False),
     initial_prompt: str | None = Form(None),
+    diarize: bool = Form(False),
 ):
     if not file.filename:
         raise HTTPException(400, "No filename provided")
@@ -90,6 +132,13 @@ async def transcribe(
     if task not in ("transcribe", "translate"):
         raise HTTPException(400, "task must be 'transcribe' or 'translate'")
 
+    if diarize and not settings.hf_token:
+        raise HTTPException(
+            422,
+            "Speaker diarization is not configured. "
+            "Set the STT_HF_TOKEN environment variable to enable it.",
+        )
+
     content = await file.read()
     if len(content) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"File too large. Max {settings.max_upload_mb} MB")
@@ -100,8 +149,10 @@ async def transcribe(
         tmp_path = tmp.name
 
     try:
-        # Ensure model is loaded (lazy init)
-        logger.info("Transcribing %s (%d bytes, lang=%s, task=%s)", file.filename, len(content), language, task)
+        logger.info(
+            "Transcribing %s (%d bytes, lang=%s, task=%s, diarize=%s)",
+            file.filename, len(content), language, task, diarize,
+        )
         get_model()
 
         result = transcribe_audio(
@@ -110,6 +161,7 @@ async def transcribe(
             task=task,
             word_timestamps=word_timestamps,
             initial_prompt=initial_prompt,
+            diarize=diarize,
         )
         logger.info(
             "Done: %.1fs audio in %.1fs (%.1fx realtime), lang=%s",
@@ -118,6 +170,8 @@ async def transcribe(
             result.language,
         )
         return result
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     except Exception as e:
         logger.exception("Transcription failed")
         raise HTTPException(500, f"Transcription failed: {str(e)}")

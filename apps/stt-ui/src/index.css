@@ -245,6 +245,24 @@ body {
 }
 .seg-text { flex: 1; }
 
+/* Speaker badge shown in diarized segments */
+.seg-speaker {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 99px;
+  background: hsl(var(--speaker-hue, 180), 50%, 88%);
+  color: hsl(var(--speaker-hue, 180), 55%, 28%);
+  white-space: nowrap;
+}
+
+/* Disabled option label (diarization unavailable) */
+.disabled-option {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .result-json {
   padding: 1rem;
   margin: 0;

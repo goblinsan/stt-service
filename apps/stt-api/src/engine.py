@@ -69,11 +69,13 @@ def transcribe_audio(
     task: str = "transcribe",
     word_timestamps: bool = False,
     initial_prompt: str | None = None,
+    diarize: bool = False,
 ) -> TranscribeResult:
     model = get_model()
 
+    t0 = time.monotonic()
+
     with _inference_lock:
-        t0 = time.monotonic()
         segments_iter, info = model.transcribe(
             audio_path,
             language=language,
@@ -111,7 +113,25 @@ def transcribe_audio(
             )
             full_text_parts.append(seg.text.strip())
 
-        elapsed = time.monotonic() - t0
+    if diarize:
+        if not settings.hf_token:
+            raise ValueError(
+                "STT_HF_TOKEN must be set to use speaker diarization"
+            )
+        from .diarization import diarize as run_diarize
+        from .merge import assign_speakers
+
+        logger.info("Running speaker diarization on %s", audio_path)
+        diarization_segs = run_diarize(
+            audio_path,
+            settings.hf_token,
+            settings.model_cache_dir,
+            settings.pyannote_model,
+        )
+        segments = assign_speakers(segments, diarization_segs)
+        logger.info(
+            "Diarization complete: %d speaker turns assigned", len(diarization_segs)
+        )
 
     return TranscribeResult(
         text=" ".join(full_text_parts),
@@ -119,5 +139,5 @@ def transcribe_audio(
         language_probability=round(info.language_probability, 3),
         duration=round(info.duration, 3),
         segments=segments,
-        processing_time=round(elapsed, 3),
+        processing_time=round(time.monotonic() - t0, 3),
     )

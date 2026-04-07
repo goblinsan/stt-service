@@ -6,6 +6,7 @@ class TranscribeRequest(BaseModel):
     task: str = Field("transcribe", pattern="^(transcribe|translate)$")
     word_timestamps: bool = Field(False, description="Include word-level timestamps")
     initial_prompt: str | None = Field(None, description="Optional prompt to condition the model")
+    diarize: bool = Field(False, description="Run speaker diarization (requires STT_HF_TOKEN)")
 
 
 class WordSegment(BaseModel):
@@ -33,11 +34,17 @@ class TranscribeResult(BaseModel):
     processing_time: float
 
 
+class DiarizationInfo(BaseModel):
+    model: str
+    ready: bool
+
+
 class ModelInfo(BaseModel):
     model_size: str
     device: str
     compute_type: str
     ready: bool
+    diarization: DiarizationInfo | None = None
 
 
 class HealthResponse(BaseModel):

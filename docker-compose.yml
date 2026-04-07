@@ -9,6 +9,8 @@ services:
       - STT_MODEL_SIZE=${STT_MODEL_SIZE:-large-v3}
       - STT_DEVICE=${STT_DEVICE:-auto}
       - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-auto}
+      - STT_HF_TOKEN=${STT_HF_TOKEN:-}
+      - HF_HOME=/data/models/huggingface
     deploy:
       resources:
         reservations:
@@ -21,7 +23,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 180s
     restart: unless-stopped
 
   stt-ui:
