@@ -36,8 +36,13 @@ _reaper_thread: threading.Thread | None = None
 def _reaper(idle_timeout_sec: int) -> None:
     """Background thread: unload the pipeline after it has been idle."""
     global _pipeline, _last_used
+    # Wake up at most every 10 s, but no more than every 1/6th of the timeout
+    # so we never miss the deadline by more than ~17%.
+    _REAPER_MIN_SLEEP_SEC = 10
+    _REAPER_FRACTION = 6
+    sleep_sec = max(_REAPER_MIN_SLEEP_SEC, idle_timeout_sec // _REAPER_FRACTION)
     while True:
-        time.sleep(max(10, idle_timeout_sec // 6))
+        time.sleep(sleep_sec)
         with _pipeline_lock:
             if _pipeline is None:
                 # Nothing to unload; keep running in case it is reloaded later.

@@ -12,6 +12,8 @@ from .models import DiarizationInfo, HealthResponse, ModelInfo, TranscribeResult
 
 logger = logging.getLogger("stt.api")
 
+_BYTES_PER_MB = 1024 * 1024
+
 app = FastAPI(title="STT Service", version="0.1.0")
 
 app.add_middleware(
@@ -99,9 +101,9 @@ async def info():
         if torch.cuda.is_available():
             gpu_info = {
                 "name": torch.cuda.get_device_name(0),
-                "vram_total_mb": round(torch.cuda.get_device_properties(0).total_mem / 1024 / 1024),
-                "vram_used_mb": round(torch.cuda.memory_allocated(0) / 1024 / 1024),
-                "vram_reserved_mb": round(torch.cuda.memory_reserved(0) / 1024 / 1024),
+                "vram_total_mb": round(torch.cuda.get_device_properties(0).total_mem / _BYTES_PER_MB),
+                "vram_used_mb": round(torch.cuda.memory_allocated(0) / _BYTES_PER_MB),
+                "vram_reserved_mb": round(torch.cuda.memory_reserved(0) / _BYTES_PER_MB),
             }
     except ImportError:
         pass

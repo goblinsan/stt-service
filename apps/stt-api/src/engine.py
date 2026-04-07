@@ -10,6 +10,8 @@ from .models import Segment, SpeakerSummary, TranscribeResult, WordSegment
 
 logger = logging.getLogger("stt.engine")
 
+_BYTES_PER_MB = 1024 * 1024
+
 # Primary Whisper model (used for all non-diarized requests and when no
 # diarize_whisper_model override is configured).
 _model: WhisperModel | None = None
@@ -115,7 +117,7 @@ def _vram_used_mb() -> int | None:
     try:
         import torch
         if torch.cuda.is_available():
-            return round(torch.cuda.memory_allocated(0) / 1024 / 1024)
+            return round(torch.cuda.memory_allocated(0) / _BYTES_PER_MB)
     except Exception:
         pass
     return None
