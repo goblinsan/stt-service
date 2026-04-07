@@ -23,6 +23,7 @@ export interface ServiceInfo {
   model_loaded: boolean;
   gpu: { name: string; vram_total_mb: number; vram_used_mb: number } | null;
   max_upload_mb: number;
+  diarization: { available: boolean; model: string; ready: boolean };
 }
 
 export async function fetchInfo(): Promise<ServiceInfo> {
@@ -38,6 +39,7 @@ export async function transcribe(
     task?: string;
     word_timestamps?: boolean;
     initial_prompt?: string;
+    diarize?: boolean;
   },
   onProgress?: (stage: string) => void,
 ): Promise<TranscribeResult> {
@@ -47,6 +49,7 @@ export async function transcribe(
   if (options.task) form.append('task', options.task);
   if (options.word_timestamps) form.append('word_timestamps', 'true');
   if (options.initial_prompt) form.append('initial_prompt', options.initial_prompt);
+  if (options.diarize) form.append('diarize', 'true');
 
   onProgress?.('Uploading...');
   const res = await fetch('/api/transcribe', { method: 'POST', body: form });

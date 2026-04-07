@@ -8,6 +8,13 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}.${ms}`;
 }
 
+/** Generate a deterministic hue from a speaker label string. */
+function speakerHue(label: string): number {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = label.charCodeAt(i) + ((hash << 5) - hash);
+  return Math.abs(hash) % 360;
+}
+
 function DropZone({ onFile, disabled }: { onFile: (f: File) => void; disabled: boolean }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -49,10 +56,14 @@ function Options({
   language, setLanguage,
   task, setTask,
   wordTimestamps, setWordTimestamps,
+  diarize, setDiarize,
+  diarizationAvailable,
 }: {
   language: string; setLanguage: (v: string) => void;
   task: string; setTask: (v: string) => void;
   wordTimestamps: boolean; setWordTimestamps: (v: boolean) => void;
+  diarize: boolean; setDiarize: (v: boolean) => void;
+  diarizationAvailable: boolean;
 }) {
   return (
     <div className="options-row">
@@ -83,6 +94,15 @@ function Options({
       <label className="check-label">
         <input type="checkbox" checked={wordTimestamps} onChange={(e) => setWordTimestamps(e.target.checked)} />
         <span>Word timestamps</span>
+      </label>
+      <label className={`check-label ${!diarizationAvailable ? 'disabled-option' : ''}`} title={!diarizationAvailable ? 'Set STT_HF_TOKEN to enable speaker diarization' : ''}>
+        <input
+          type="checkbox"
+          checked={diarize}
+          disabled={!diarizationAvailable}
+          onChange={(e) => setDiarize(e.target.checked)}
+        />
+        <span>Speaker diarization</span>
       </label>
     </div>
   );
@@ -115,6 +135,14 @@ function ResultView({ result }: { result: TranscribeResult }) {
           {result.segments.map((seg) => (
             <div key={seg.id} className="segment-row">
               <span className="seg-time">{formatTime(seg.start)} → {formatTime(seg.end)}</span>
+              {seg.speaker && (
+                <span
+                  className="seg-speaker"
+                  style={{ '--speaker-hue': speakerHue(seg.speaker) } as React.CSSProperties}
+                >
+                  {seg.speaker}
+                </span>
+              )}
               <span className="seg-text">{seg.text}</span>
             </div>
           ))}
@@ -133,6 +161,7 @@ export function App() {
   const [language, setLanguage] = useState('');
   const [task, setTask] = useState('transcribe');
   const [wordTimestamps, setWordTimestamps] = useState(false);
+  const [diarize, setDiarize] = useState(false);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TranscribeResult | null>(null);
@@ -159,6 +188,7 @@ export function App() {
         language: language || undefined,
         task,
         word_timestamps: wordTimestamps,
+        diarize,
       }, setStatus);
       setResult(res);
       setStatus('');
@@ -168,7 +198,9 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }, [file, language, task, wordTimestamps]);
+  }, [file, language, task, wordTimestamps, diarize]);
+
+  const diarizationAvailable = info?.diarization?.available ?? false;
 
   return (
     <div className="app">
@@ -198,6 +230,8 @@ export function App() {
           language={language} setLanguage={setLanguage}
           task={task} setTask={setTask}
           wordTimestamps={wordTimestamps} setWordTimestamps={setWordTimestamps}
+          diarize={diarize} setDiarize={setDiarize}
+          diarizationAvailable={diarizationAvailable}
         />
 
         <div className="action-row">

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 5100
     log_level: str = "info"
+    # Speaker diarization (pyannote.audio)
+    hf_token: str | None = None
+    pyannote_model: str = "pyannote/speaker-diarization-3.1"
 
     model_config = {"env_prefix": "STT_"}
 
