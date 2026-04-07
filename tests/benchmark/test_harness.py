@@ -1050,3 +1050,738 @@ class TestAdapterRegistration:
             assert isinstance(cls.features, FeatureSupport), (
                 f"{cls.__name__}.features must be a FeatureSupport instance"
             )
+
+
+# ---------------------------------------------------------------------------
+# FullBenchmarkSuite tests (issue #12)
+# ---------------------------------------------------------------------------
+
+class TestFullBenchmarkSuite:
+    """Tests for the full suite orchestrator in tests.benchmark.suite."""
+
+    # ---- StubAdapter that can optionally raise --------------------------
+
+    class _SuccessAdapter(StubAdapter):
+        name = "stub-success"
+
+        def __init__(self, **kwargs):
+            # **kwargs absorbs adapter-config keywords (model_size, device)
+            # not used by this test stub.
+            super().__init__()
+
+        def load(self) -> float:
+            return 0.0
+
+    class _FailingAdapter(StubAdapter):
+        name = "stub-failing"
+
+        def __init__(self, **kwargs):
+            # **kwargs absorbs adapter-config keywords not used by this stub.
+            super().__init__()
+
+        def load(self) -> float:
+            return 0.0
+
+        def transcribe(self, audio_path: str, language=None):
+            raise RuntimeError("deliberate transcribe failure")
+
+    class _LoadFailAdapter(StubAdapter):
+        name = "stub-load-fail"
+
+        def __init__(self, **kwargs):
+            # **kwargs absorbs adapter-config keywords not used by this stub.
+            super().__init__()
+
+        def load(self) -> float:
+            raise RuntimeError("deliberate load failure")
+
+    # ---- Helpers --------------------------------------------------------
+
+    def _make_manifest(self, tmp_path: Path) -> dict:
+        """Write a minimal manifest.json with two samples."""
+        wav1 = tmp_path / "sample_001.wav"
+        wav2 = tmp_path / "sample_002.wav"
+        ref1 = tmp_path / "sample_001.txt"
+        ref2 = tmp_path / "sample_002.txt"
+        wav1.write_bytes(b"")
+        wav2.write_bytes(b"")
+        ref1.write_text("hello world", encoding="utf-8")
+        ref2.write_text("foo bar", encoding="utf-8")
+
+        manifest = {
+            "version": "1",
+            "description": "test",
+            "samples": [
+                {
+                    "id": "s001",
+                    "filename": "sample_001.wav",
+                    "reference": "sample_001.txt",
+                    "category": "clean_single_speaker",
+                    "language": "en",
+                    "duration_s": 5.0,
+                },
+                {
+                    "id": "s002",
+                    "filename": "sample_002.wav",
+                    "reference": "sample_002.txt",
+                    "category": "noisy",
+                    "language": "en",
+                    "duration_s": 10.0,
+                },
+            ],
+        }
+        (tmp_path / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        return manifest
+
+    def _make_config(self, adapter_cls, model_size="stub-model"):
+        from tests.benchmark.suite import AdapterConfig
+
+        return AdapterConfig(
+            adapter_cls=adapter_cls,
+            model_size=model_size,
+            model_kwarg="model_size",
+            device="cpu",
+            extra_kwargs={},
+        )
+
+    # ---- AdapterConfig tests -------------------------------------------
+
+    def test_adapter_config_build_success(self):
+        from tests.benchmark.suite import AdapterConfig
+
+        cfg = AdapterConfig(
+            adapter_cls=self._SuccessAdapter,
+            model_size="test",
+            model_kwarg="model_size",
+            device="cpu",
+        )
+        adapter = cfg.build()
+        assert isinstance(adapter, self._SuccessAdapter)
+
+    # ---- Suite run tests -----------------------------------------------
+
+    def test_suite_all_success(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        output_dir = tmp_path / "results"
+        cfg = self._make_config(self._SuccessAdapter)
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=output_dir,
+            save_on_adapter_complete=False,
+        )
+        result = suite.run()
+
+        assert result.total_runs == 2
+        assert result.successful_runs == 2
+        assert result.failure_count == 0
+        assert result.success_rate == 1.0
+
+    def test_suite_handles_transcribe_failure(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfg = self._make_config(self._FailingAdapter)
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=tmp_path / "results",
+            save_on_adapter_complete=False,
+        )
+        result = suite.run()
+
+        assert result.total_runs == 2
+        assert result.successful_runs == 0
+        assert result.failure_count == 2
+        failure = result.failures[0]
+        assert failure.adapter_name == "stub-failing"
+        assert failure.error_type == "RuntimeError"
+        assert "transcribe" in failure.error_message
+
+    def test_suite_handles_load_failure(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfg = self._make_config(self._LoadFailAdapter)
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=tmp_path / "results",
+            save_on_adapter_complete=False,
+        )
+        result = suite.run()
+
+        # total_runs is 0 because we never reached the per-sample loop
+        assert result.total_runs == 0
+        assert result.failure_count == 1
+        assert result.failures[0].sample_id == "<model_load>"
+
+    def test_suite_multiple_configs(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfgs = [
+            self._make_config(self._SuccessAdapter, "model-a"),
+            self._make_config(self._SuccessAdapter, "model-b"),
+        ]
+        suite = FullBenchmarkSuite(
+            configs=cfgs,
+            data_dir=tmp_path,
+            output_dir=tmp_path / "results",
+            save_on_adapter_complete=False,
+        )
+        result = suite.run()
+
+        assert result.total_runs == 4
+        assert result.successful_runs == 4
+        assert result.failure_count == 0
+
+    def test_suite_saves_json_on_adapter_complete(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        output_dir = tmp_path / "results"
+        cfg = self._make_config(self._SuccessAdapter, "my-model")
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=output_dir,
+            save_on_adapter_complete=True,
+        )
+        suite.run()
+
+        json_files = list(output_dir.glob("*.json"))
+        assert len(json_files) >= 1, "Expected at least one JSON result file"
+
+    def test_suite_saves_failure_log(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfg = self._make_config(self._FailingAdapter)
+        output_dir = tmp_path / "results"
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=output_dir,
+            save_on_adapter_complete=False,
+        )
+        suite.run()
+
+        failure_log = output_dir / "failures.json"
+        assert failure_log.exists()
+        data = json.loads(failure_log.read_text(encoding="utf-8"))
+        assert data["failure_count"] == 2
+        assert len(data["failures"]) == 2
+
+    def test_suite_no_failure_log_on_clean_run(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfg = self._make_config(self._SuccessAdapter)
+        output_dir = tmp_path / "results"
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=output_dir,
+            save_on_adapter_complete=False,
+        )
+        suite.run()
+
+        failure_log = output_dir / "failures.json"
+        assert not failure_log.exists()
+
+    def test_suite_results_by_adapter_key(self, tmp_path):
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfg = self._make_config(self._SuccessAdapter, "big-model")
+        suite = FullBenchmarkSuite(
+            configs=[cfg],
+            data_dir=tmp_path,
+            output_dir=tmp_path / "results",
+            save_on_adapter_complete=False,
+        )
+        result = suite.run()
+
+        expected_key = "stub-success/big-model"
+        assert expected_key in result.results_by_adapter
+        assert len(result.results_by_adapter[expected_key]) == 2
+
+    def test_suite_mixed_success_and_failure(self, tmp_path):
+        """One config succeeds, one fails — suite continues and records both."""
+        from tests.benchmark.suite import FullBenchmarkSuite
+
+        self._make_manifest(tmp_path)
+        cfgs = [
+            self._make_config(self._SuccessAdapter),
+            self._make_config(self._FailingAdapter),
+        ]
+        suite = FullBenchmarkSuite(
+            configs=cfgs,
+            data_dir=tmp_path,
+            output_dir=tmp_path / "results",
+            save_on_adapter_complete=False,
+        )
+        result = suite.run()
+
+        assert result.total_runs == 4
+        assert result.successful_runs == 2
+        assert result.failure_count == 2
+
+    def test_run_failure_dataclass_fields(self):
+        from tests.benchmark.suite import RunFailure
+
+        f = RunFailure(
+            adapter_name="eng",
+            model_size="lg",
+            sample_id="s1",
+            audio_path="/f/a.wav",
+            error_type="RuntimeError",
+            error_message="boom",
+            traceback="Traceback …",
+        )
+        assert f.adapter_name == "eng"
+        assert f.error_type == "RuntimeError"
+
+    def test_suite_result_success_rate(self):
+        from tests.benchmark.suite import SuiteResult
+
+        sr = SuiteResult(total_runs=10, successful_runs=8)
+        assert sr.success_rate == pytest.approx(0.8)
+
+    def test_suite_result_zero_runs(self):
+        from tests.benchmark.suite import SuiteResult
+
+        sr = SuiteResult()
+        assert sr.success_rate == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Report analysis section tests (issue #13)
+# ---------------------------------------------------------------------------
+
+class TestReportAnalysisSection:
+    """Tests for the Analysis section added to generate_report (issue #13)."""
+
+    def _m(self, engine="e", model="m", wer=0.1, rtf=5.0, vram=2048,
+           lang=True, word_ts=True, translation=False, diar=True):
+        return {
+            "engine": engine,
+            "model": model,
+            "wer_avg": wer,
+            "wer_min": wer,
+            "wer_max": wer,
+            "cer_avg": None,
+            "wall_time_avg": 1.0,
+            "wall_time_min": 0.8,
+            "wall_time_max": 1.2,
+            "first_token_latency_avg": None,
+            "rtf_avg": rtf,
+            "vram_peak_mb": vram,
+            "model_load_time": None,
+            "language_detection": lang,
+            "word_timestamps": word_ts,
+            "translation": translation,
+            "diarization_ready": diar,
+            "run_count": 2,
+        }
+
+    def test_report_has_analysis_section(self):
+        report = generate_report([self._m()])
+        assert "## Analysis" in report
+
+    def test_best_wer_identified(self):
+        metrics = [
+            self._m(engine="a", wer=0.05),
+            self._m(engine="b", wer=0.10),
+        ]
+        report = generate_report(metrics)
+        assert "**Best WER:**" in report
+        assert "a" in report
+
+    def test_best_rtf_identified(self):
+        metrics = [
+            self._m(engine="fast", rtf=20.0),
+            self._m(engine="slow", rtf=5.0),
+        ]
+        report = generate_report(metrics)
+        assert "**Best Speed (RTF):**" in report
+        assert "fast" in report
+
+    def test_best_vram_identified(self):
+        metrics = [
+            self._m(engine="small", vram=512),
+            self._m(engine="large", vram=4096),
+        ]
+        report = generate_report(metrics)
+        assert "**Best VRAM Efficiency:**" in report
+        assert "small" in report
+
+    def test_best_diar_pairing_identified(self):
+        metrics = [
+            self._m(engine="diar-small", vram=512,  word_ts=True, diar=True),
+            self._m(engine="diar-large", vram=4096, word_ts=True, diar=True),
+        ]
+        report = generate_report(metrics)
+        assert "**Best Diarization Pairing:**" in report
+        assert "diar-small" in report
+
+    def test_diar_pairing_absent_when_no_eligible_engine(self):
+        metrics = [self._m(engine="no-diar", word_ts=False, diar=False)]
+        report = generate_report(metrics)
+        assert "**Best Diarization Pairing:**" in report
+        assert "no engine" in report.lower() or "—" in report
+
+    def test_no_analysis_section_when_empty(self):
+        report = generate_report([])
+        assert "No results" in report
+
+    def test_dominated_engine_detected(self):
+        """Engine B is dominated when A beats it on all available axes."""
+        metrics = [
+            # Engine A: better WER, better RTF, better VRAM
+            self._m(engine="A", wer=0.05, rtf=10.0, vram=1000),
+            # Engine B: worse on all axes
+            self._m(engine="B", wer=0.15, rtf=5.0,  vram=3000),
+        ]
+        report = generate_report(metrics)
+        assert "Strictly Dominated" in report
+        assert "B" in report
+
+    def test_no_dominated_engines_when_trade_offs(self):
+        """No engine should be flagged as dominated if there are trade-offs."""
+        metrics = [
+            # A: better WER but worse VRAM
+            self._m(engine="A", wer=0.05, vram=4000, rtf=8.0),
+            # B: worse WER but better VRAM
+            self._m(engine="B", wer=0.15, vram=500,  rtf=8.0),
+        ]
+        report = generate_report(metrics)
+        assert "Strictly Dominated" not in report
+
+    def test_wer_none_handled_gracefully(self):
+        metrics = [self._m(wer=None)]
+        report = generate_report(metrics)
+        assert "## Analysis" in report
+        assert "no WER data" in report.lower() or "—" in report
+
+    def test_rtf_none_handled_gracefully(self):
+        metrics = [self._m(rtf=None)]
+        report = generate_report(metrics)
+        assert "## Analysis" in report
+
+    def test_vram_none_handled_gracefully(self):
+        metrics = [self._m(vram=None)]
+        report = generate_report(metrics)
+        assert "## Analysis" in report
+
+
+# ---------------------------------------------------------------------------
+# Co-tenancy benchmark tests (issue #14)
+# ---------------------------------------------------------------------------
+
+class TestCoTenancy:
+    """Tests for tests.benchmark.cotenancy."""
+
+    def _make_adapter(self):
+        return StubAdapter(text="hello world", processing_time=0.01, duration=5.0)
+
+    def _make_sample(self, sample_id="s001", audio_path="/fake/audio.wav"):
+        return {
+            "sample_id": sample_id,
+            "audio_path": audio_path,
+            "reference": "hello world",
+        }
+
+    # ---- CoTenancyScenario -------------------------------------------
+
+    def test_scenario_defaults(self):
+        from tests.benchmark.cotenancy import CoTenancyScenario
+
+        sc = CoTenancyScenario("baseline")
+        assert sc.name == "baseline"
+        assert sc.tenant_vram_mb == 0
+        assert sc.description == ""
+
+    def test_scenario_with_vram(self):
+        from tests.benchmark.cotenancy import CoTenancyScenario
+
+        sc = CoTenancyScenario("pyannote", tenant_vram_mb=1500, description="pyannote idle")
+        assert sc.tenant_vram_mb == 1500
+
+    # ---- VramTenant context manager (no CUDA in CI) ------------------
+
+    def test_vram_tenant_zero_is_noop(self):
+        from tests.benchmark.cotenancy import _VramTenant
+
+        with _VramTenant(0):
+            pass  # must not raise
+
+    def test_vram_tenant_nonzero_noop_without_cuda(self):
+        from tests.benchmark.cotenancy import _VramTenant
+
+        # In CI without GPU this should silently succeed (no CUDA available)
+        with _VramTenant(512):
+            pass
+
+    # ---- OOM detection -------------------------------------------
+
+    def test_is_oom_error_runtime(self):
+        from tests.benchmark.cotenancy import _is_oom_error
+
+        exc = RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        assert _is_oom_error(exc)
+
+    def test_is_oom_error_false_for_other(self):
+        from tests.benchmark.cotenancy import _is_oom_error
+
+        exc = ValueError("some other error")
+        assert not _is_oom_error(exc)
+
+    # ---- CoTenancyBenchmark.run() ------------------------------------
+
+    def _make_benchmark(self, adapter_instance, sample=None, extra_scenarios=None):
+        from tests.benchmark.cotenancy import CoTenancyBenchmark, CoTenancyScenario
+
+        class _DirectConfig:
+            """Helper: adapter_configs entry that wraps a pre-built instance."""
+
+        sample = sample or self._make_sample()
+        scenarios = [CoTenancyScenario("baseline", tenant_vram_mb=0)]
+        if extra_scenarios:
+            scenarios += extra_scenarios
+
+        bench = CoTenancyBenchmark(
+            adapter_configs=[],
+            scenarios=scenarios,
+            audio_samples=[sample],
+        )
+        # Inject the pre-built adapter directly via monkey-patching _build_adapter
+        bench._build_adapter = lambda cfg: adapter_instance
+        # Provide a single config dict so the outer loop fires once
+        bench.adapter_configs = [{"cls": type(adapter_instance), "model_size": "stub"}]
+        return bench
+
+    def test_run_baseline_success(self):
+        from tests.benchmark.cotenancy import CoTenancyBenchmark, CoTenancyScenario, OutcomeKind
+
+        adapter = self._make_adapter()
+        bench = self._make_benchmark(adapter)
+        suite = bench.run()
+
+        assert suite.total == 1
+        assert suite.success_count == 1
+        assert suite.oom_count == 0
+        run = suite.runs[0]
+        assert run.outcome == OutcomeKind.SUCCESS
+        assert run.scenario_name == "baseline"
+        assert run.wall_time is not None and run.wall_time >= 0
+        # baseline has no slowdown factor because there's no prior baseline
+        assert run.slowdown_factor is None
+
+    def test_run_with_two_scenarios_computes_slowdown(self):
+        from tests.benchmark.cotenancy import CoTenancyBenchmark, CoTenancyScenario, OutcomeKind
+
+        adapter = self._make_adapter()
+        bench = self._make_benchmark(
+            adapter,
+            extra_scenarios=[CoTenancyScenario("contention", tenant_vram_mb=0)],
+        )
+        suite = bench.run()
+
+        # 2 scenarios × 1 sample × 1 adapter = 2 runs
+        assert suite.total == 2
+        # The second run should have a slowdown_factor set (baseline is from run 1)
+        second_run = suite.runs[1]
+        assert second_run.slowdown_factor is not None
+
+    def test_run_captures_oom(self):
+        """An OOM exception should be recorded with outcome=oom."""
+        from tests.benchmark.cotenancy import (
+            CoTenancyBenchmark,
+            CoTenancyScenario,
+            OutcomeKind,
+        )
+
+        class OOMAdapter(StubAdapter):
+            name = "oom-adapter"
+
+            def load(self):
+                return 0.0
+
+            def transcribe(self, audio_path, language=None):
+                raise RuntimeError("CUDA out of memory. Tried to allocate 3.00 GiB")
+
+        adapter = OOMAdapter()
+        bench = self._make_benchmark(adapter)
+        suite = bench.run()
+
+        assert suite.oom_count == 1
+        assert suite.runs[0].outcome == OutcomeKind.OOM
+
+    def test_run_captures_generic_error(self):
+        from tests.benchmark.cotenancy import CoTenancyBenchmark, CoTenancyScenario, OutcomeKind
+
+        class ErrAdapter(StubAdapter):
+            name = "err-adapter"
+
+            def load(self):
+                return 0.0
+
+            def transcribe(self, audio_path, language=None):
+                raise ValueError("something unrelated to OOM")
+
+        adapter = ErrAdapter()
+        bench = self._make_benchmark(adapter)
+        suite = bench.run()
+
+        assert suite.error_count == 1
+        assert suite.runs[0].outcome == OutcomeKind.ERROR
+
+    # ---- Report generation -------------------------------------------
+
+    def test_generate_report_success_case(self):
+        from tests.benchmark.cotenancy import (
+            CoTenancyBenchmark,
+            CoTenancyRunResult,
+            CoTenancySuiteResult,
+            OutcomeKind,
+        )
+
+        suite = CoTenancySuiteResult(
+            runs=[
+                CoTenancyRunResult(
+                    adapter_name="fw",
+                    model_size="large-v3",
+                    sample_id="s001",
+                    scenario_name="baseline",
+                    tenant_vram_mb=0,
+                    outcome=OutcomeKind.SUCCESS,
+                    wall_time=2.0,
+                    slowdown_factor=None,
+                ),
+                CoTenancyRunResult(
+                    adapter_name="fw",
+                    model_size="large-v3",
+                    sample_id="s001",
+                    scenario_name="pyannote",
+                    tenant_vram_mb=1500,
+                    outcome=OutcomeKind.SUCCESS,
+                    wall_time=2.5,
+                    baseline_wall_time=2.0,
+                    slowdown_factor=1.25,
+                ),
+            ],
+            total=2,
+            success_count=2,
+        )
+        report = CoTenancyBenchmark.generate_report(suite)
+
+        assert "# Co-Tenancy Benchmark Report" in report
+        assert "## Per-Scenario Summary" in report
+        assert "## Conclusion" in report
+        assert "fw" in report
+        assert "1.25x" in report or "1.25" in report
+
+    def test_generate_report_with_oom(self):
+        from tests.benchmark.cotenancy import (
+            CoTenancyBenchmark,
+            CoTenancyRunResult,
+            CoTenancySuiteResult,
+            OutcomeKind,
+        )
+
+        suite = CoTenancySuiteResult(
+            runs=[
+                CoTenancyRunResult(
+                    adapter_name="fw",
+                    model_size="large-v3",
+                    sample_id="s001",
+                    scenario_name="llm-idle",
+                    tenant_vram_mb=4096,
+                    outcome=OutcomeKind.OOM,
+                    error_message="CUDA out of memory",
+                ),
+            ],
+            total=1,
+            oom_count=1,
+        )
+        report = CoTenancyBenchmark.generate_report(suite)
+
+        assert "OOM" in report
+        assert "## OOM Incidents" in report
+
+    def test_generate_report_conclusion_no_oom(self):
+        from tests.benchmark.cotenancy import (
+            CoTenancyBenchmark,
+            CoTenancyRunResult,
+            CoTenancySuiteResult,
+            OutcomeKind,
+        )
+
+        suite = CoTenancySuiteResult(
+            runs=[
+                CoTenancyRunResult(
+                    adapter_name="fw",
+                    model_size="medium",
+                    sample_id="s001",
+                    scenario_name="baseline",
+                    tenant_vram_mb=0,
+                    outcome=OutcomeKind.SUCCESS,
+                    wall_time=1.0,
+                )
+            ],
+            total=1,
+            success_count=1,
+        )
+        report = CoTenancyBenchmark.generate_report(suite)
+        assert "No OOM errors" in report
+
+    def test_save_report_creates_file(self, tmp_path):
+        from tests.benchmark.cotenancy import (
+            CoTenancyBenchmark,
+            CoTenancySuiteResult,
+        )
+
+        suite = CoTenancySuiteResult()
+        bench = CoTenancyBenchmark([], [], [])
+        out = tmp_path / "report.md"
+        bench.save_report(suite, out)
+        assert out.exists()
+
+    def test_save_json_creates_file(self, tmp_path):
+        from tests.benchmark.cotenancy import (
+            CoTenancyBenchmark,
+            CoTenancyRunResult,
+            CoTenancySuiteResult,
+            OutcomeKind,
+        )
+
+        suite = CoTenancySuiteResult(
+            runs=[
+                CoTenancyRunResult(
+                    adapter_name="fw",
+                    model_size="m",
+                    sample_id="s1",
+                    scenario_name="baseline",
+                    tenant_vram_mb=0,
+                    outcome=OutcomeKind.SUCCESS,
+                    wall_time=1.0,
+                )
+            ],
+            total=1,
+            success_count=1,
+        )
+        bench = CoTenancyBenchmark([], [], [])
+        out = tmp_path / "cotenancy.json"
+        bench.save_json(suite, out)
+
+        assert out.exists()
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["total"] == 1
+        assert len(data["runs"]) == 1
+        assert data["runs"][0]["outcome"] == OutcomeKind.SUCCESS
