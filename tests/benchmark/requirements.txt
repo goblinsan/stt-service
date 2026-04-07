@@ -14,3 +14,24 @@ requests>=2.31.0
 
 # Audio I/O — used by download_data.py for FLAC → WAV conversion (optional)
 soundfile>=0.12.1
+
+# ---------------------------------------------------------------------------
+# Engine adapter dependencies (install only the engines you intend to test)
+# ---------------------------------------------------------------------------
+
+# Issue #6: faster-whisper (CTranslate2 backend) — production baseline
+# faster-whisper>=1.0.3
+
+# Issue #7: whisper.cpp Python bindings
+# pywhispercpp>=1.2.0
+
+# Issue #8: openai-whisper (original PyTorch reference implementation)
+# openai-whisper>=20231117
+
+# Issue #9: distil-whisper via HuggingFace transformers pipeline
+# transformers>=4.39.0
+# accelerate>=0.28.0
+
+# Issue #10: whisper-jax (optional, JAX/XLA backend)
+# whisper-jax>=0.0.1
+# jax[cuda12_pip]  # install separately from https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
