@@ -11,6 +11,10 @@ services:
       - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-auto}
       - STT_ENGINE=${STT_ENGINE:-faster-whisper}
       - STT_HF_TOKEN=${STT_HF_TOKEN:-}
+      - STT_PYANNOTE_MODEL=${STT_PYANNOTE_MODEL:-pyannote/speaker-diarization-3.1}
+      - STT_DIARIZE_WHISPER_MODEL=${STT_DIARIZE_WHISPER_MODEL:-}
+      - STT_PYANNOTE_IDLE_TIMEOUT_SEC=${STT_PYANNOTE_IDLE_TIMEOUT_SEC:-300}
+      - STT_WARMUP_PYANNOTE=${STT_WARMUP_PYANNOTE:-true}
       - HF_HOME=/data/models/huggingface
     deploy:
       resources:
