@@ -577,3 +577,476 @@ class TestDataManifest:
         assert any(s["duration_s"] >= 60 for s in long_form), (
             "At least one long-form sample must be >= 60 seconds"
         )
+
+
+# ---------------------------------------------------------------------------
+# Engine adapter contract tests (issues #6–#10)
+#
+# These tests validate that each concrete adapter implementation conforms to
+# the BaseAdapter contract WITHOUT requiring any real models or GPU resources.
+# The adapters are tested in isolation using unittest.mock to intercept the
+# underlying engine calls, so the full test suite runs in CI without any
+# optional dependencies installed.
+# ---------------------------------------------------------------------------
+
+import sys
+import types
+import unittest.mock as mock
+from typing import Any
+
+
+def _make_fake_fw_model(text="hello world", language="en", duration=5.0):
+    """Return a mock faster-whisper WhisperModel."""
+    fake_seg = mock.MagicMock()
+    fake_seg.id = 0
+    fake_seg.start = 0.0
+    fake_seg.end = duration
+    fake_seg.text = f" {text}"
+    fake_word = mock.MagicMock()
+    fake_word.word = text.split()[0]
+    fake_word.start = 0.0
+    fake_word.end = 0.5
+    fake_word.probability = 0.99
+    fake_seg.words = [fake_word]
+
+    fake_info = mock.MagicMock()
+    fake_info.language = language
+    fake_info.language_probability = 0.98
+    fake_info.duration = duration
+
+    model = mock.MagicMock()
+    model.transcribe.return_value = (iter([fake_seg]), fake_info)
+    return model
+
+
+def _mock_faster_whisper_module(fake_model: Any = None) -> dict:
+    """Return a sys.modules patch dict that stubs out ``faster_whisper``."""
+    if fake_model is None:
+        fake_model = _make_fake_fw_model()
+    fake_fw = types.ModuleType("faster_whisper")
+    fake_fw.WhisperModel = mock.MagicMock(return_value=fake_model)
+    return {"faster_whisper": fake_fw}
+
+
+class TestFasterWhisperAdapter:
+    """Contract tests for FasterWhisperAdapter (issue #6)."""
+
+    def _make_adapter(self):
+        from tests.benchmark.adapters.faster_whisper import FasterWhisperAdapter
+        return FasterWhisperAdapter(model_size="large-v3", device="cpu")
+
+    def test_name(self):
+        adapter = self._make_adapter()
+        assert adapter.name == "faster-whisper"
+
+    def test_features(self):
+        adapter = self._make_adapter()
+        assert adapter.features.language_detection
+        assert adapter.features.word_timestamps
+        assert adapter.features.translation
+        assert adapter.features.diarization_ready
+
+    def test_load_returns_float(self):
+        adapter = self._make_adapter()
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module()):
+            load_time = adapter.load()
+        assert isinstance(load_time, float)
+        assert load_time >= 0
+
+    def test_transcribe_without_load_raises(self):
+        adapter = self._make_adapter()
+        with pytest.raises(RuntimeError, match="load\\(\\)"):
+            adapter.transcribe("/fake/audio.wav")
+
+    def test_transcribe_returns_adapter_result(self):
+        from tests.benchmark.adapters.base import AdapterResult
+
+        adapter = self._make_adapter()
+        fake_model = _make_fake_fw_model(text="hello world", language="en", duration=5.0)
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module(fake_model)):
+            adapter.load()
+        result = adapter.transcribe("/fake/audio.wav")
+
+        assert isinstance(result, AdapterResult)
+        assert "hello world" in result.text
+        assert result.language == "en"
+        assert result.processing_time >= 0
+        assert result.duration == pytest.approx(5.0)
+        assert len(result.segments) == 1
+
+    def test_transcribe_with_language(self):
+        adapter = self._make_adapter()
+        fake_model = _make_fake_fw_model()
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module(fake_model)):
+            adapter.load()
+        adapter.transcribe("/fake/audio.wav", language="en")
+        _, call_kwargs = fake_model.transcribe.call_args
+        assert call_kwargs.get("language") == "en"
+
+    def test_unload_clears_model(self):
+        adapter = self._make_adapter()
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module()):
+            adapter.load()
+        assert adapter._model is not None
+        adapter.unload()
+        assert adapter._model is None
+
+    def test_unload_before_load_is_safe(self):
+        adapter = self._make_adapter()
+        adapter.unload()  # must not raise
+
+
+class TestWhisperCppAdapter:
+    """Contract tests for WhisperCppAdapter (issue #7)."""
+
+    def _make_adapter(self):
+        from tests.benchmark.adapters.whisper_cpp import WhisperCppAdapter
+        return WhisperCppAdapter(model_path="/fake/model.bin")
+
+    def _make_fake_cpp_model(self, text="hello world"):
+        fake_seg = mock.MagicMock()
+        fake_seg.t0 = 0
+        fake_seg.t1 = 500
+        fake_seg.text = text
+        fake_seg.tokens = None
+        fake_seg.words = None
+        model = mock.MagicMock()
+        model.transcribe.return_value = [fake_seg]
+        model.lang_str = "en"
+        return model
+
+    def test_name(self):
+        assert self._make_adapter().name == "whisper.cpp"
+
+    def test_features(self):
+        adapter = self._make_adapter()
+        assert adapter.features.language_detection
+        assert adapter.features.word_timestamps
+        assert adapter.features.translation
+
+    def test_load_returns_float(self):
+        adapter = self._make_adapter()
+        fake_module = types.ModuleType("pywhispercpp")
+        fake_model_cls = mock.MagicMock(return_value=self._make_fake_cpp_model())
+        fake_module.model = types.SimpleNamespace(Model=fake_model_cls)
+        with mock.patch.dict(sys.modules, {"pywhispercpp": fake_module, "pywhispercpp.model": fake_module.model}):
+            load_time = adapter.load()
+        assert isinstance(load_time, float)
+        assert load_time >= 0
+
+    def test_transcribe_without_load_raises(self):
+        adapter = self._make_adapter()
+        with pytest.raises(RuntimeError, match="load\\(\\)"):
+            adapter.transcribe("/fake/audio.wav")
+
+    def test_transcribe_returns_adapter_result(self):
+        from tests.benchmark.adapters.base import AdapterResult
+
+        adapter = self._make_adapter()
+        fake_cpp_model = self._make_fake_cpp_model("hello world")
+        fake_module = types.ModuleType("pywhispercpp")
+        fake_module.model = types.SimpleNamespace(Model=mock.MagicMock(return_value=fake_cpp_model))
+        with mock.patch.dict(sys.modules, {"pywhispercpp": fake_module, "pywhispercpp.model": fake_module.model}):
+            adapter.load()
+        result = adapter.transcribe("/fake/audio.wav")
+
+        assert isinstance(result, AdapterResult)
+        assert result.text == "hello world"
+        assert result.language == "en"
+        assert result.processing_time >= 0
+
+    def test_unload_clears_model(self):
+        adapter = self._make_adapter()
+        fake_module = types.ModuleType("pywhispercpp")
+        fake_module.model = types.SimpleNamespace(Model=mock.MagicMock(return_value=self._make_fake_cpp_model()))
+        with mock.patch.dict(sys.modules, {"pywhispercpp": fake_module, "pywhispercpp.model": fake_module.model}):
+            adapter.load()
+        assert adapter._model is not None
+        adapter.unload()
+        assert adapter._model is None
+
+
+class TestOpenAIWhisperAdapter:
+    """Contract tests for OpenAIWhisperAdapter (issue #8)."""
+
+    def _make_adapter(self):
+        from tests.benchmark.adapters.openai_whisper import OpenAIWhisperAdapter
+        return OpenAIWhisperAdapter(model_size="large-v3", device="cpu")
+
+    def _fake_raw_result(self, text="hello world"):
+        return {
+            "text": f" {text}",
+            "language": "en",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 3.5,
+                    "text": f" {text}",
+                    "words": [
+                        {"word": w, "start": 0.0, "end": 0.5, "probability": 0.98}
+                        for w in text.split()
+                    ],
+                }
+            ],
+        }
+
+    def _mock_whisper_module(self, fake_model=None):
+        if fake_model is None:
+            fake_model = mock.MagicMock()
+        fake_whisper = types.ModuleType("whisper")
+        fake_whisper.load_model = mock.MagicMock(return_value=fake_model)
+        return {"whisper": fake_whisper}
+
+    def test_name(self):
+        assert self._make_adapter().name == "openai-whisper"
+
+    def test_features(self):
+        adapter = self._make_adapter()
+        assert adapter.features.language_detection
+        assert adapter.features.word_timestamps
+        assert adapter.features.translation
+        assert adapter.features.diarization_ready
+
+    def test_load_returns_float(self):
+        adapter = self._make_adapter()
+        with mock.patch.dict(sys.modules, self._mock_whisper_module()):
+            load_time = adapter.load()
+        assert isinstance(load_time, float)
+        assert load_time >= 0
+
+    def test_transcribe_without_load_raises(self):
+        adapter = self._make_adapter()
+        fake_whisper = types.ModuleType("whisper")
+        with mock.patch.dict(sys.modules, {"whisper": fake_whisper}):
+            with pytest.raises(RuntimeError, match="load\\(\\)"):
+                adapter.transcribe("/fake/audio.wav")
+
+    def test_transcribe_returns_adapter_result(self):
+        from tests.benchmark.adapters.base import AdapterResult
+
+        adapter = self._make_adapter()
+        fake_model = mock.MagicMock()
+        fake_model.transcribe.return_value = self._fake_raw_result("hello world")
+
+        with mock.patch.dict(sys.modules, self._mock_whisper_module(fake_model)):
+            adapter.load()
+        result = adapter.transcribe("/fake/audio.wav")
+
+        assert isinstance(result, AdapterResult)
+        assert "hello world" in result.text
+        assert result.language == "en"
+        assert result.processing_time >= 0
+        assert len(result.segments) == 1
+        assert result.segments[0].words is not None
+
+    def test_unload_clears_model(self):
+        adapter = self._make_adapter()
+        with mock.patch.dict(sys.modules, self._mock_whisper_module()):
+            adapter.load()
+        assert adapter._model is not None
+        adapter.unload()
+        assert adapter._model is None
+
+
+class TestDistilWhisperAdapter:
+    """Contract tests for DistilWhisperAdapter (issue #9)."""
+
+    def _make_adapter(self, backend="faster-whisper"):
+        from tests.benchmark.adapters.distil_whisper import DistilWhisperAdapter
+        return DistilWhisperAdapter(
+            model_id="distil-large-v3",
+            backend=backend,
+            device="cpu",
+        )
+
+    def test_name(self):
+        assert self._make_adapter().name == "distil-whisper"
+
+    def test_invalid_backend_raises(self):
+        from tests.benchmark.adapters.distil_whisper import DistilWhisperAdapter
+        with pytest.raises(ValueError, match="backend"):
+            DistilWhisperAdapter(backend="invalid-backend")
+
+    def test_features_diarization_ready(self):
+        adapter = self._make_adapter()
+        assert adapter.features.diarization_ready
+
+    def test_load_faster_whisper_backend_returns_float(self):
+        adapter = self._make_adapter(backend="faster-whisper")
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module()):
+            load_time = adapter.load()
+        assert isinstance(load_time, float)
+        assert load_time >= 0
+
+    def test_transcribe_faster_whisper_backend(self):
+        from tests.benchmark.adapters.base import AdapterResult
+
+        adapter = self._make_adapter(backend="faster-whisper")
+        fake_model = _make_fake_fw_model(text="test transcription", language="en", duration=3.0)
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module(fake_model)):
+            adapter.load()
+        result = adapter.transcribe("/fake/audio.wav")
+
+        assert isinstance(result, AdapterResult)
+        assert "test transcription" in result.text
+        assert result.language == "en"
+
+    def test_transcribe_without_load_raises(self):
+        adapter = self._make_adapter(backend="faster-whisper")
+        with pytest.raises(RuntimeError, match="load\\(\\)"):
+            adapter.transcribe("/fake/audio.wav")
+
+    def test_unload_clears_model(self):
+        adapter = self._make_adapter(backend="faster-whisper")
+        with mock.patch.dict(sys.modules, _mock_faster_whisper_module()):
+            adapter.load()
+        assert adapter._model is not None
+        adapter.unload()
+        assert adapter._model is None
+
+    def test_transcribe_huggingface_backend(self):
+        from tests.benchmark.adapters.base import AdapterResult
+        from tests.benchmark.adapters.distil_whisper import DistilWhisperAdapter
+
+        adapter = DistilWhisperAdapter(
+            model_id="distil-whisper/distil-large-v3",
+            backend="huggingface",
+            device="cpu",
+        )
+        fake_pipeline_result = {
+            "text": "hello world",
+            "chunks": [{"text": "hello world", "timestamp": (0.0, 3.5)}],
+        }
+        fake_pipe_fn = mock.MagicMock(return_value=fake_pipeline_result)
+        adapter._pipeline = fake_pipe_fn
+        result = adapter.transcribe("/fake/audio.wav")
+
+        assert isinstance(result, AdapterResult)
+        assert result.text == "hello world"
+        assert len(result.segments) == 1
+        assert result.segments[0].start == pytest.approx(0.0)
+        assert result.segments[0].end == pytest.approx(3.5)
+
+
+class TestWhisperJaxAdapter:
+    """Contract tests for WhisperJaxAdapter (issue #10, optional)."""
+
+    def _make_adapter(self):
+        from tests.benchmark.adapters.whisper_jax import WhisperJaxAdapter
+        return WhisperJaxAdapter(model_size="large-v2")
+
+    def test_name(self):
+        assert self._make_adapter().name == "whisper-jax"
+
+    def test_features_word_timestamps_not_supported(self):
+        adapter = self._make_adapter()
+        assert not adapter.features.word_timestamps
+
+    def test_load_raises_import_error_when_not_installed(self):
+        """WhisperJaxAdapter.load() must raise ImportError if whisper_jax is missing."""
+        adapter = self._make_adapter()
+        with mock.patch.dict(sys.modules, {"whisper_jax": None, "jax": None, "jax.numpy": None}):
+            with pytest.raises((ImportError, TypeError)):
+                adapter.load()
+
+    def test_transcribe_without_load_raises(self):
+        adapter = self._make_adapter()
+        with pytest.raises(RuntimeError, match="load\\(\\)"):
+            adapter.transcribe("/fake/audio.wav")
+
+    def test_transcribe_returns_adapter_result(self):
+        from tests.benchmark.adapters.base import AdapterResult
+        from tests.benchmark.adapters.whisper_jax import WhisperJaxAdapter
+
+        adapter = WhisperJaxAdapter(model_size="large-v2")
+        fake_result = {
+            "text": "hello world",
+            "chunks": [{"text": "hello world", "timestamp": (0.0, 4.0)}],
+        }
+        fake_pipe = mock.MagicMock(return_value=fake_result)
+        adapter._pipeline = fake_pipe
+        result = adapter.transcribe("/fake/audio.wav")
+
+        assert isinstance(result, AdapterResult)
+        assert result.text == "hello world"
+        assert len(result.segments) == 1
+        assert result.duration == pytest.approx(4.0)
+
+    def test_unload_clears_pipeline(self):
+        from tests.benchmark.adapters.whisper_jax import WhisperJaxAdapter
+
+        adapter = WhisperJaxAdapter(model_size="large-v2")
+        adapter._pipeline = mock.MagicMock()
+        adapter.unload()
+        assert adapter._pipeline is None
+
+
+class TestAdapterRegistration:
+    """Verify all adapters are importable from the adapters package."""
+
+    def test_all_adapters_importable(self):
+        from tests.benchmark.adapters import (  # noqa: F401
+            DistilWhisperAdapter,
+            FasterWhisperAdapter,
+            OpenAIWhisperAdapter,
+            WhisperCppAdapter,
+            WhisperJaxAdapter,
+        )
+
+    def test_all_adapters_are_base_adapter_subclasses(self):
+        from tests.benchmark.adapters import (
+            BaseAdapter,
+            DistilWhisperAdapter,
+            FasterWhisperAdapter,
+            OpenAIWhisperAdapter,
+            WhisperCppAdapter,
+            WhisperJaxAdapter,
+        )
+        for cls in (
+            FasterWhisperAdapter,
+            WhisperCppAdapter,
+            OpenAIWhisperAdapter,
+            DistilWhisperAdapter,
+            WhisperJaxAdapter,
+        ):
+            assert issubclass(cls, BaseAdapter), f"{cls.__name__} must extend BaseAdapter"
+
+    def test_all_adapters_have_name(self):
+        from tests.benchmark.adapters import (
+            DistilWhisperAdapter,
+            FasterWhisperAdapter,
+            OpenAIWhisperAdapter,
+            WhisperCppAdapter,
+            WhisperJaxAdapter,
+        )
+        for cls in (
+            FasterWhisperAdapter,
+            WhisperCppAdapter,
+            OpenAIWhisperAdapter,
+            DistilWhisperAdapter,
+            WhisperJaxAdapter,
+        ):
+            assert isinstance(cls.name, str) and cls.name != "unknown", (
+                f"{cls.__name__}.name must be set to a non-default string"
+            )
+
+    def test_all_adapters_have_feature_support(self):
+        from tests.benchmark.adapters import (
+            BaseAdapter,
+            DistilWhisperAdapter,
+            FeatureSupport,
+            FasterWhisperAdapter,
+            OpenAIWhisperAdapter,
+            WhisperCppAdapter,
+            WhisperJaxAdapter,
+        )
+        for cls in (
+            FasterWhisperAdapter,
+            WhisperCppAdapter,
+            OpenAIWhisperAdapter,
+            DistilWhisperAdapter,
+            WhisperJaxAdapter,
+        ):
+            assert isinstance(cls.features, FeatureSupport), (
+                f"{cls.__name__}.features must be a FeatureSupport instance"
+            )
