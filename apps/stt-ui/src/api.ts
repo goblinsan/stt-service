@@ -7,6 +7,12 @@ export interface Segment {
   speaker?: string;
 }
 
+export interface SpeakerSummary {
+  id: string;
+  total_duration: number;
+  segment_count: number;
+}
+
 export interface TranscribeResult {
   text: string;
   language: string;
@@ -14,6 +20,7 @@ export interface TranscribeResult {
   duration: number;
   segments: Segment[];
   processing_time: number;
+  speakers?: SpeakerSummary[];
 }
 
 export interface ServiceInfo {
@@ -40,6 +47,8 @@ export async function transcribe(
     word_timestamps?: boolean;
     initial_prompt?: string;
     diarize?: boolean;
+    min_speakers?: number;
+    max_speakers?: number;
   },
   onProgress?: (stage: string) => void,
 ): Promise<TranscribeResult> {
@@ -50,6 +59,8 @@ export async function transcribe(
   if (options.word_timestamps) form.append('word_timestamps', 'true');
   if (options.initial_prompt) form.append('initial_prompt', options.initial_prompt);
   if (options.diarize) form.append('diarize', 'true');
+  if (options.min_speakers != null) form.append('min_speakers', String(options.min_speakers));
+  if (options.max_speakers != null) form.append('max_speakers', String(options.max_speakers));
 
   onProgress?.('Uploading...');
   const res = await fetch('/api/transcribe', { method: 'POST', body: form });
