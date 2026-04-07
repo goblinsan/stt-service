@@ -109,6 +109,7 @@ async def info():
         pass
 
     return {
+        "engine": settings.engine,
         "model_size": settings.model_size,
         "device": device,
         "compute_type": compute_type,
