@@ -6,7 +6,7 @@ from pathlib import Path
 from faster_whisper import WhisperModel
 
 from .config import settings
-from .models import Segment, TranscribeResult, WordSegment
+from .models import Segment, SpeakerSummary, TranscribeResult, WordSegment
 
 logger = logging.getLogger("stt.engine")
 
@@ -70,6 +70,8 @@ def transcribe_audio(
     word_timestamps: bool = False,
     initial_prompt: str | None = None,
     diarize: bool = False,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
 ) -> TranscribeResult:
     model = get_model()
 
@@ -113,6 +115,8 @@ def transcribe_audio(
             )
             full_text_parts.append(seg.text.strip())
 
+    speakers: list[SpeakerSummary] | None = None
+
     if diarize:
         if not settings.hf_token:
             raise ValueError(
@@ -127,11 +131,29 @@ def transcribe_audio(
             settings.hf_token,
             settings.model_cache_dir,
             settings.pyannote_model,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
         )
         segments = assign_speakers(segments, diarization_segs)
         logger.info(
             "Diarization complete: %d speaker turns assigned", len(diarization_segs)
         )
+
+        speaker_stats: dict[str, dict] = {}
+        for seg in segments:
+            if seg.speaker:
+                if seg.speaker not in speaker_stats:
+                    speaker_stats[seg.speaker] = {"total_duration": 0.0, "segment_count": 0}
+                speaker_stats[seg.speaker]["total_duration"] += seg.end - seg.start
+                speaker_stats[seg.speaker]["segment_count"] += 1
+        speakers = [
+            SpeakerSummary(
+                id=spk_id,
+                total_duration=round(stats["total_duration"], 3),
+                segment_count=stats["segment_count"],
+            )
+            for spk_id, stats in sorted(speaker_stats.items())
+        ]
 
     return TranscribeResult(
         text=" ".join(full_text_parts),
@@ -140,4 +162,5 @@ def transcribe_audio(
         duration=round(info.duration, 3),
         segments=segments,
         processing_time=round(time.monotonic() - t0, 3),
+        speakers=speakers,
     )

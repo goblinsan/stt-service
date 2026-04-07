@@ -274,3 +274,46 @@ body {
   overflow: auto;
   white-space: pre;
 }
+
+/* Speaker summary table */
+.speaker-summary {
+  padding: 1rem;
+  border-top: 1px solid var(--line);
+}
+.speaker-summary-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.speaker-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.speaker-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.speaker-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.speaker-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Number inputs in options */
+.options-row input[type="number"] {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  background: var(--panel);
+  color: var(--text);
+}

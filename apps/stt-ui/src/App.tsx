@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchInfo, transcribe, type ServiceInfo, type TranscribeResult } from './api';
+import { fetchInfo, transcribe, type ServiceInfo, type TranscribeResult, type SpeakerSummary } from './api';
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -58,12 +58,16 @@ function Options({
   wordTimestamps, setWordTimestamps,
   diarize, setDiarize,
   diarizationAvailable,
+  minSpeakers, setMinSpeakers,
+  maxSpeakers, setMaxSpeakers,
 }: {
   language: string; setLanguage: (v: string) => void;
   task: string; setTask: (v: string) => void;
   wordTimestamps: boolean; setWordTimestamps: (v: boolean) => void;
   diarize: boolean; setDiarize: (v: boolean) => void;
   diarizationAvailable: boolean;
+  minSpeakers: string; setMinSpeakers: (v: string) => void;
+  maxSpeakers: string; setMaxSpeakers: (v: string) => void;
 }) {
   return (
     <div className="options-row">
@@ -104,6 +108,66 @@ function Options({
         />
         <span>Speaker diarization</span>
       </label>
+      {diarize && (
+        <>
+          <label>
+            <span>Min speakers</span>
+            <input
+              type="number"
+              min={1}
+              value={minSpeakers}
+              onChange={(e) => setMinSpeakers(e.target.value)}
+              placeholder="auto"
+              style={{ width: '5rem' }}
+            />
+          </label>
+          <label>
+            <span>Max speakers</span>
+            <input
+              type="number"
+              min={1}
+              value={maxSpeakers}
+              onChange={(e) => setMaxSpeakers(e.target.value)}
+              placeholder="auto"
+              style={{ width: '5rem' }}
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SpeakerSummaryView({ speakers }: { speakers: SpeakerSummary[] }) {
+  if (!speakers.length) return null;
+  return (
+    <div className="speaker-summary">
+      <h3 className="speaker-summary-title">Speaker Summary</h3>
+      <table className="speaker-table">
+        <thead>
+          <tr>
+            <th>Speaker</th>
+            <th>Segments</th>
+            <th>Total Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {speakers.map((s) => (
+            <tr key={s.id}>
+              <td>
+                <span
+                  className="seg-speaker"
+                  style={{ '--speaker-hue': speakerHue(s.id) } as React.CSSProperties}
+                >
+                  {s.id}
+                </span>
+              </td>
+              <td>{s.segment_count}</td>
+              <td>{formatTime(s.total_duration)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -151,6 +215,9 @@ function ResultView({ result }: { result: TranscribeResult }) {
       {view === 'json' && (
         <pre className="result-json">{JSON.stringify(result, null, 2)}</pre>
       )}
+      {result.speakers && result.speakers.length > 0 && (
+        <SpeakerSummaryView speakers={result.speakers} />
+      )}
     </div>
   );
 }
@@ -162,6 +229,8 @@ export function App() {
   const [task, setTask] = useState('transcribe');
   const [wordTimestamps, setWordTimestamps] = useState(false);
   const [diarize, setDiarize] = useState(false);
+  const [minSpeakers, setMinSpeakers] = useState('');
+  const [maxSpeakers, setMaxSpeakers] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TranscribeResult | null>(null);
@@ -183,12 +252,21 @@ export function App() {
     setError('');
     setResult(null);
     setStatus('Uploading...');
+    const parsedMin = minSpeakers ? parseInt(minSpeakers, 10) : undefined;
+    const parsedMax = maxSpeakers ? parseInt(maxSpeakers, 10) : undefined;
+    if (parsedMin !== undefined && parsedMax !== undefined && parsedMin > parsedMax) {
+      setError('Min speakers must be less than or equal to max speakers');
+      setBusy(false);
+      return;
+    }
     try {
       const res = await transcribe(file, {
         language: language || undefined,
         task,
         word_timestamps: wordTimestamps,
         diarize,
+        min_speakers: parsedMin,
+        max_speakers: parsedMax,
       }, setStatus);
       setResult(res);
       setStatus('');
@@ -198,7 +276,7 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }, [file, language, task, wordTimestamps, diarize]);
+  }, [file, language, task, wordTimestamps, diarize, minSpeakers, maxSpeakers]);
 
   const diarizationAvailable = info?.diarization?.available ?? false;
 
@@ -232,6 +310,8 @@ export function App() {
           wordTimestamps={wordTimestamps} setWordTimestamps={setWordTimestamps}
           diarize={diarize} setDiarize={setDiarize}
           diarizationAvailable={diarizationAvailable}
+          minSpeakers={minSpeakers} setMinSpeakers={setMinSpeakers}
+          maxSpeakers={maxSpeakers} setMaxSpeakers={setMaxSpeakers}
         />
 
         <div className="action-row">

@@ -118,6 +118,8 @@ async def transcribe(
     word_timestamps: bool = Form(False),
     initial_prompt: str | None = Form(None),
     diarize: bool = Form(False),
+    min_speakers: int | None = Form(None),
+    max_speakers: int | None = Form(None),
 ):
     if not file.filename:
         raise HTTPException(400, "No filename provided")
@@ -150,8 +152,8 @@ async def transcribe(
 
     try:
         logger.info(
-            "Transcribing %s (%d bytes, lang=%s, task=%s, diarize=%s)",
-            file.filename, len(content), language, task, diarize,
+            "Transcribing %s (%d bytes, lang=%s, task=%s, diarize=%s, min_speakers=%s, max_speakers=%s)",
+            file.filename, len(content), language, task, diarize, min_speakers, max_speakers,
         )
         get_model()
 
@@ -162,6 +164,8 @@ async def transcribe(
             word_timestamps=word_timestamps,
             initial_prompt=initial_prompt,
             diarize=diarize,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
         )
         logger.info(
             "Done: %.1fs audio in %.1fs (%.1fx realtime), lang=%s",

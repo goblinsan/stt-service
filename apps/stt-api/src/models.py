@@ -25,6 +25,12 @@ class Segment(BaseModel):
     speaker: str | None = None
 
 
+class SpeakerSummary(BaseModel):
+    id: str
+    total_duration: float
+    segment_count: int
+
+
 class TranscribeResult(BaseModel):
     text: str
     language: str
@@ -32,6 +38,7 @@ class TranscribeResult(BaseModel):
     duration: float
     segments: list[Segment]
     processing_time: float
+    speakers: list[SpeakerSummary] | None = None
 
 
 class DiarizationInfo(BaseModel):
