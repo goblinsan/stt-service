@@ -81,7 +81,7 @@ class WhisperJaxAdapter(BaseAdapter):
         """
         try:
             import jax.numpy as jnp  # noqa: PLC0415
-            from whisper_jax import FlaxWhisperPipline  # noqa: PLC0415
+            from whisper_jax import FlaxWhisperPipeline  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 "whisper-jax is not installed. Install with:\n"
@@ -94,7 +94,7 @@ class WhisperJaxAdapter(BaseAdapter):
         dtype = getattr(jnp, self.dtype, jnp.bfloat16)
 
         t0 = time.monotonic()
-        self._pipeline = FlaxWhisperPipline(
+        self._pipeline = FlaxWhisperPipeline(
             f"openai/whisper-{self.model_size}",
             dtype=dtype,
             batch_size=self.batch_size,
