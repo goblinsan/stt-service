@@ -1,0 +1,150 @@
+{
+  "version": "1",
+  "description": "Reference audio dataset for STT engine benchmarking",
+  "license": "Public-domain and CC-licensed sources (LibriSpeech, Mozilla Common Voice)",
+  "samples": [
+    {
+      "id": "ls_clean_en_001",
+      "filename": "ls_clean_en_001.wav",
+      "reference": "ls_clean_en_001.txt",
+      "category": "clean_single_speaker",
+      "language": "en",
+      "duration_s": 10.0,
+      "source": "LibriSpeech test-clean",
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "description": "Clean, single-speaker English — baseline"
+    },
+    {
+      "id": "ls_clean_en_002",
+      "filename": "ls_clean_en_002.wav",
+      "reference": "ls_clean_en_002.txt",
+      "category": "clean_single_speaker",
+      "language": "en",
+      "duration_s": 15.0,
+      "source": "LibriSpeech test-clean",
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "description": "Clean, single-speaker English — longer utterance"
+    },
+    {
+      "id": "ls_clean_en_003",
+      "filename": "ls_clean_en_003.wav",
+      "reference": "ls_clean_en_003.txt",
+      "category": "clean_single_speaker",
+      "language": "en",
+      "duration_s": 30.0,
+      "source": "LibriSpeech test-clean",
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "description": "Clean, single-speaker English — 30 s clip"
+    },
+    {
+      "id": "ls_other_en_001",
+      "filename": "ls_other_en_001.wav",
+      "reference": "ls_other_en_001.txt",
+      "category": "noisy",
+      "language": "en",
+      "duration_s": 12.0,
+      "source": "LibriSpeech test-other",
+      "url": "https://www.openslr.org/resources/12/test-other.tar.gz",
+      "description": "Noisier / challenging English audio"
+    },
+    {
+      "id": "ls_other_en_002",
+      "filename": "ls_other_en_002.wav",
+      "reference": "ls_other_en_002.txt",
+      "category": "noisy",
+      "language": "en",
+      "duration_s": 20.0,
+      "source": "LibriSpeech test-other",
+      "url": "https://www.openslr.org/resources/12/test-other.tar.gz",
+      "description": "Noisier / challenging English audio — longer"
+    },
+    {
+      "id": "cv_accented_en_001",
+      "filename": "cv_accented_en_001.wav",
+      "reference": "cv_accented_en_001.txt",
+      "category": "accented_english",
+      "language": "en",
+      "duration_s": 8.0,
+      "source": "Mozilla Common Voice (en)",
+      "url": "https://commonvoice.mozilla.org/en/datasets",
+      "description": "Accented English speaker from Common Voice"
+    },
+    {
+      "id": "cv_accented_en_002",
+      "filename": "cv_accented_en_002.wav",
+      "reference": "cv_accented_en_002.txt",
+      "category": "accented_english",
+      "language": "en",
+      "duration_s": 9.0,
+      "source": "Mozilla Common Voice (en)",
+      "url": "https://commonvoice.mozilla.org/en/datasets",
+      "description": "Accented English speaker — different accent"
+    },
+    {
+      "id": "cv_es_001",
+      "filename": "cv_es_001.wav",
+      "reference": "cv_es_001.txt",
+      "category": "non_english",
+      "language": "es",
+      "duration_s": 8.0,
+      "source": "Mozilla Common Voice (es)",
+      "url": "https://commonvoice.mozilla.org/es/datasets",
+      "description": "Spanish speaker (Common Voice)"
+    },
+    {
+      "id": "cv_fr_001",
+      "filename": "cv_fr_001.wav",
+      "reference": "cv_fr_001.txt",
+      "category": "non_english",
+      "language": "fr",
+      "duration_s": 8.0,
+      "source": "Mozilla Common Voice (fr)",
+      "url": "https://commonvoice.mozilla.org/fr/datasets",
+      "description": "French speaker (Common Voice)"
+    },
+    {
+      "id": "cv_ja_001",
+      "filename": "cv_ja_001.wav",
+      "reference": "cv_ja_001.txt",
+      "category": "non_english",
+      "language": "ja",
+      "duration_s": 8.0,
+      "source": "Mozilla Common Voice (ja)",
+      "url": "https://commonvoice.mozilla.org/ja/datasets",
+      "description": "Japanese speaker (Common Voice)"
+    },
+    {
+      "id": "ls_multi_speaker_001",
+      "filename": "ls_multi_speaker_001.wav",
+      "reference": "ls_multi_speaker_001.txt",
+      "category": "multi_speaker",
+      "language": "en",
+      "duration_s": 30.0,
+      "source": "LibriSpeech (concatenated speakers)",
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "description": "Two-speaker English conversation (constructed from LibriSpeech)"
+    },
+    {
+      "id": "ls_longform_001",
+      "filename": "ls_longform_001.wav",
+      "reference": "ls_longform_001.txt",
+      "category": "long_form",
+      "language": "en",
+      "duration_s": 120.0,
+      "source": "LibriSpeech test-clean",
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "description": "Long-form English narration (~2 minutes)"
+    },
+    {
+      "id": "ls_longform_002",
+      "filename": "ls_longform_002.wav",
+      "reference": "ls_longform_002.txt",
+      "category": "long_form",
+      "language": "en",
+      "duration_s": 600.0,
+      "source": "LibriSpeech test-clean",
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "description": "Long-form English narration (~10 minutes)"
+    }
+  ]
+}

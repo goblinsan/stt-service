@@ -1,0 +1,15 @@
+# Audio and transcript files are NOT committed — use download_data.py to fetch them.
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.m4a
+
+# Cached LibriSpeech archives
+*.tar.gz
+
+# Downloaded Common Voice clips
+cv_*.txt
+cv_*.wav
+ls_*.txt
+ls_*.wav

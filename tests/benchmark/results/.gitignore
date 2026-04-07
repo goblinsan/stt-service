@@ -1,0 +1,5 @@
+# Generated benchmark result files are not committed.
+*.json
+
+# Generated reports are not committed.
+report.md
