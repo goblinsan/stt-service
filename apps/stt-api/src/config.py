@@ -1,5 +1,9 @@
 from pydantic_settings import BaseSettings
 
+# Engines selectable via STT_ENGINE.  Only "faster-whisper" is fully supported
+# in production; additional values are reserved for future adapters.
+SUPPORTED_ENGINES: tuple[str, ...] = ("faster-whisper",)
+
 
 class Settings(BaseSettings):
     model_size: str = "large-v3"
@@ -10,6 +14,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 5100
     log_level: str = "info"
+    # STT backend engine.  "faster-whisper" is the production default.
+    # Set STT_ENGINE to select an alternative adapter.
+    engine: str = "faster-whisper"
     # Speaker diarization (pyannote.audio)
     hf_token: str | None = None
     pyannote_model: str = "pyannote/speaker-diarization-3.1"

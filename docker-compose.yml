@@ -9,6 +9,7 @@ services:
       - STT_MODEL_SIZE=${STT_MODEL_SIZE:-large-v3}
       - STT_DEVICE=${STT_DEVICE:-auto}
       - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-auto}
+      - STT_ENGINE=${STT_ENGINE:-faster-whisper}
       - STT_HF_TOKEN=${STT_HF_TOKEN:-}
       - HF_HOME=/data/models/huggingface
     deploy:

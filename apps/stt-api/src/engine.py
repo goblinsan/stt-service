@@ -5,10 +5,17 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-from .config import settings
+from .config import SUPPORTED_ENGINES, settings
 from .models import Segment, SpeakerSummary, TranscribeResult, WordSegment
 
 logger = logging.getLogger("stt.engine")
+
+# Validate engine selection at import time so misconfigurations surface immediately.
+if settings.engine not in SUPPORTED_ENGINES:
+    raise ValueError(
+        f"Unsupported STT_ENGINE: {settings.engine!r}. "
+        f"Supported engines: {', '.join(SUPPORTED_ENGINES)}"
+    )
 
 _BYTES_PER_MB = 1024 * 1024
 

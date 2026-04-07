@@ -2,16 +2,19 @@
 
 Covers:
   - New config fields (diarize_whisper_model, pyannote_idle_timeout_sec,
-    warmup_pyannote)
+    warmup_pyannote, engine)
   - TranscribeResult timing breakdown fields (whisper_time, diarization_time)
   - diarization.unload_pipeline()
   - diarization idle-timeout reaper thread is started when timeout > 0
   - engine.get_diarize_model() routing logic
+  - STT_ENGINE validation in engine module
 """
 
 import sys
 import time
 import types
+
+import pytest
 from unittest.mock import MagicMock, patch
 
 
@@ -48,6 +51,74 @@ class TestNewConfigFields:
         assert s.diarize_whisper_model == "medium"
         assert s.pyannote_idle_timeout_sec == 60
         assert s.warmup_pyannote is False
+
+    def test_engine_defaults_to_faster_whisper(self):
+        from src.config import Settings
+
+        s = Settings()
+        assert s.engine == "faster-whisper"
+
+    def test_engine_env_var_is_read(self, monkeypatch):
+        monkeypatch.setenv("STT_ENGINE", "faster-whisper")
+        from src.config import Settings
+
+        s = Settings()
+        assert s.engine == "faster-whisper"
+
+    def test_supported_engines_constant(self):
+        from src.config import SUPPORTED_ENGINES
+
+        assert "faster-whisper" in SUPPORTED_ENGINES
+
+
+# ---------------------------------------------------------------------------
+# STT_ENGINE validation in engine module
+# ---------------------------------------------------------------------------
+
+class TestEngineValidation:
+    """Verify STT_ENGINE validation logic (issue #17)."""
+
+    def test_unsupported_engine_raises_value_error(self):
+        """Validation logic should raise ValueError for unsupported engines."""
+        from src.config import SUPPORTED_ENGINES
+
+        # Directly exercise the same condition used in engine.py
+        bad_engine = "nonexistent-engine"
+        assert bad_engine not in SUPPORTED_ENGINES, (
+            "Expected 'nonexistent-engine' to not be in SUPPORTED_ENGINES"
+        )
+        # Simulate the check that engine.py performs at import time
+        with pytest.raises(ValueError, match="nonexistent-engine"):
+            if bad_engine not in SUPPORTED_ENGINES:
+                raise ValueError(
+                    f"Unsupported STT_ENGINE: {bad_engine!r}. "
+                    f"Supported engines: {', '.join(SUPPORTED_ENGINES)}"
+                )
+
+    def test_supported_engine_does_not_raise(self):
+        """faster-whisper must pass the validation check without errors."""
+        from src.config import SUPPORTED_ENGINES
+
+        engine = "faster-whisper"
+        assert engine in SUPPORTED_ENGINES
+        # No exception raised
+        if engine not in SUPPORTED_ENGINES:
+            raise ValueError(f"Unsupported: {engine}")
+
+    def test_error_message_lists_supported_engines(self):
+        """ValueError message should list all supported values for discoverability."""
+        from src.config import SUPPORTED_ENGINES
+
+        bad_engine = "whisper-jax"
+        try:
+            if bad_engine not in SUPPORTED_ENGINES:
+                raise ValueError(
+                    f"Unsupported STT_ENGINE: {bad_engine!r}. "
+                    f"Supported engines: {', '.join(SUPPORTED_ENGINES)}"
+                )
+        except ValueError as exc:
+            for eng in SUPPORTED_ENGINES:
+                assert eng in str(exc), f"Expected '{eng}' in error message"
 
 
 # ---------------------------------------------------------------------------

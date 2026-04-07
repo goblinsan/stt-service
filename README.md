@@ -1,6 +1,6 @@
 # stt-service
 
-GPU-accelerated speech-to-text service with a web UI, powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+GPU-accelerated speech-to-text service with a web UI, powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2 backend).
 
 ## Architecture
 
@@ -40,6 +40,7 @@ Open `http://localhost:5101` — the UI is served through nginx with the API at 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `STT_ENGINE` | `faster-whisper` | STT backend engine. `faster-whisper` is the production default and currently the only supported value. |
 | `STT_MODEL_SIZE` | `large-v3` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`, …) |
 | `STT_DEVICE` | `auto` | `cuda` or `cpu` |
 | `STT_COMPUTE_TYPE` | `auto` | `float16`, `int8`, etc. |
@@ -154,4 +155,14 @@ examples:
 ## Control-plane integration
 
 Deploy as a remote workload to a GPU node registered in `gateway-control-plane`.
+See [docs/control-plane-followup.md](docs/control-plane-followup.md) for health
+probe timeout expectations, model warmup behaviour, new env vars, and VRAM
+resource limits.
+
+## Engine selection
+
+The production engine is **faster-whisper (large-v3)**.  See
+[docs/engine-decision.md](docs/engine-decision.md) for benchmark data, VRAM
+budget analysis, and the rationale behind this decision.  A rollback plan is
+also documented there.
 
