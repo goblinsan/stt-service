@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .engine import get_device_info, get_model, is_model_loaded, transcribe_audio
+from .engine import get_device_info, get_diarize_model, get_model, is_model_loaded, transcribe_audio
 from .models import DiarizationInfo, HealthResponse, ModelInfo, TranscribeResult
 
 logger = logging.getLogger("stt.api")
@@ -32,11 +32,21 @@ async def startup():
         try:
             await asyncio.to_thread(get_model)
             logger.info("Whisper model warmup complete")
+            # If a separate diarize model is configured, warm it up too.
+            if settings.diarize_whisper_model and settings.diarize_whisper_model != settings.model_size:
+                await asyncio.to_thread(get_diarize_model)
+                logger.info("Diarize Whisper model warmup complete (%s)", settings.diarize_whisper_model)
         except Exception:
             logger.exception("Whisper model warmup failed")
 
     async def _load_pyannote():
         if not settings.hf_token:
+            return
+        if not settings.warmup_pyannote:
+            logger.info(
+                "Pyannote warmup disabled (STT_WARMUP_PYANNOTE=false) — "
+                "pipeline will load lazily on first diarize request"
+            )
             return
         from .diarization import get_pipeline
         try:
@@ -91,6 +101,7 @@ async def info():
                 "name": torch.cuda.get_device_name(0),
                 "vram_total_mb": round(torch.cuda.get_device_properties(0).total_mem / 1024 / 1024),
                 "vram_used_mb": round(torch.cuda.memory_allocated(0) / 1024 / 1024),
+                "vram_reserved_mb": round(torch.cuda.memory_reserved(0) / 1024 / 1024),
             }
     except ImportError:
         pass
@@ -106,6 +117,8 @@ async def info():
             "available": bool(settings.hf_token),
             "model": settings.pyannote_model,
             "ready": is_pipeline_loaded(),
+            "idle_timeout_sec": settings.pyannote_idle_timeout_sec,
+            "whisper_model_override": settings.diarize_whisper_model,
         },
     }
 
@@ -168,8 +181,11 @@ async def transcribe(
             max_speakers=max_speakers,
         )
         logger.info(
-            "Done: %.1fs audio in %.1fs (%.1fx realtime), lang=%s",
-            result.duration, result.processing_time,
+            "Done: %.1fs audio in %.1fs total (whisper=%.1fs%s), %.1fx realtime, lang=%s",
+            result.duration,
+            result.processing_time,
+            result.whisper_time or 0.0,
+            f", diarize={result.diarization_time:.1f}s" if result.diarization_time is not None else "",
             result.duration / result.processing_time if result.processing_time > 0 else 0,
             result.language,
         )
