@@ -3,10 +3,17 @@
 Provides a thread-safe singleton loader for the pyannote
 ``speaker-diarization-3.1`` pipeline, mirroring the pattern used in
 engine.py for the Whisper model.
+
+Idle-timeout unloading (issue #32)
+------------------------------------
+When ``pyannote_idle_timeout_sec > 0`` the pipeline is automatically unloaded
+after that many seconds of inactivity, freeing the ~1.5 GB of VRAM it
+occupies.  It will be transparently reloaded on the next diarize request.
 """
 
 import logging
 import threading
+import time
 
 logger = logging.getLogger("stt.diarization")
 
@@ -14,9 +21,74 @@ _pipeline = None
 _pipeline_lock = threading.Lock()
 _inference_lock = threading.Lock()
 
+# Monotonic timestamp of the most recent pipeline use.  Updated inside
+# _inference_lock so the reaper sees a consistent value.
+_last_used: float = 0.0
+
+# Background reaper thread – created lazily, daemon so it never blocks exit.
+_reaper_thread: threading.Thread | None = None
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _reaper(idle_timeout_sec: int) -> None:
+    """Background thread: unload the pipeline after it has been idle."""
+    global _pipeline, _last_used
+    # Wake up at most every 10 s, but no more than every 1/6th of the timeout
+    # so we never miss the deadline by more than ~17%.
+    _REAPER_MIN_SLEEP_SEC = 10
+    _REAPER_FRACTION = 6
+    sleep_sec = max(_REAPER_MIN_SLEEP_SEC, idle_timeout_sec // _REAPER_FRACTION)
+    while True:
+        time.sleep(sleep_sec)
+        with _pipeline_lock:
+            if _pipeline is None:
+                # Nothing to unload; keep running in case it is reloaded later.
+                continue
+            idle = time.monotonic() - _last_used
+            if idle >= idle_timeout_sec:
+                logger.info(
+                    "Pyannote pipeline idle for %.0fs (limit %ds) — unloading to free VRAM",
+                    idle, idle_timeout_sec,
+                )
+                _pipeline = None
+
+
+def _ensure_reaper(idle_timeout_sec: int) -> None:
+    """Start the reaper daemon thread if it hasn't been started yet."""
+    global _reaper_thread
+    if _reaper_thread is not None and _reaper_thread.is_alive():
+        return
+    t = threading.Thread(
+        target=_reaper,
+        args=(idle_timeout_sec,),
+        daemon=True,
+        name="pyannote-reaper",
+    )
+    t.start()
+    _reaper_thread = t
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def is_pipeline_loaded() -> bool:
     return _pipeline is not None
+
+
+def unload_pipeline() -> None:
+    """Immediately release the pipeline and its VRAM.
+
+    Safe to call even if the pipeline is not loaded.
+    """
+    global _pipeline
+    with _pipeline_lock:
+        if _pipeline is not None:
+            logger.info("Unloading pyannote pipeline (manual request)")
+            _pipeline = None
 
 
 def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
@@ -24,6 +96,10 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
 
     The pipeline is loaded once and cached in-process.  The function is
     thread-safe: concurrent callers block until the first load finishes.
+
+    When ``STT_PYANNOTE_IDLE_TIMEOUT_SEC`` is non-zero a background daemon
+    thread will unload the pipeline after the configured idle period so VRAM
+    is returned to the OS for co-tenant GPU services.
 
     Args:
         hf_token: HuggingFace auth token for gated model access.
@@ -35,7 +111,9 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
     Raises:
         RuntimeError: If ``pyannote.audio`` is not installed.
     """
-    global _pipeline
+    global _pipeline, _last_used
+
+    # Fast path (no lock needed for a simple None-check).
     if _pipeline is not None:
         return _pipeline
 
@@ -69,7 +147,14 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
             logger.warning("Could not move pyannote pipeline to CUDA, running on CPU")
 
         _pipeline = pipeline
+        _last_used = time.monotonic()
         logger.info("Pyannote pipeline ready")
+
+        # Start the idle-timeout reaper if configured.
+        from .config import settings
+        if settings.pyannote_idle_timeout_sec > 0:
+            _ensure_reaper(settings.pyannote_idle_timeout_sec)
+
         return _pipeline
 
 
@@ -95,6 +180,8 @@ def diarize(
         min_speakers: Optional lower bound hint on the number of speakers.
         max_speakers: Optional upper bound hint on the number of speakers.
     """
+    global _last_used
+
     pipeline = get_pipeline(hf_token, model_cache_dir, pyannote_model)
 
     kwargs: dict = {}
@@ -113,6 +200,7 @@ def diarize(
 
     with _inference_lock:
         result = pipeline(audio_path, **kwargs)
+        _last_used = time.monotonic()
 
     return [
         (round(turn.start, 3), round(turn.end, 3), speaker)

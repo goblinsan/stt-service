@@ -38,6 +38,8 @@ class TranscribeResult(BaseModel):
     duration: float
     segments: list[Segment]
     processing_time: float
+    whisper_time: float | None = None
+    diarization_time: float | None = None
     speakers: list[SpeakerSummary] | None = None
 
 
