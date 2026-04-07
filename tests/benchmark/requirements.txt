@@ -1,0 +1,16 @@
+# STT benchmark harness dependencies
+#
+# Install with:
+#   pip install -r tests/benchmark/requirements.txt
+#
+# These are separate from the stt-api service requirements because the
+# benchmark harness runs on the GPU test node, not inside the API container.
+
+# WER / CER calculation
+jiwer>=3.0.4
+
+# HTTP client used by some adapters and the existing scripts/benchmark.py
+requests>=2.31.0
+
+# Audio I/O — used by download_data.py for FLAC → WAV conversion (optional)
+soundfile>=0.12.1
