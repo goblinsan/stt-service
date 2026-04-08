@@ -6,3 +6,4 @@ requests>=2.31.0
 pydantic==2.10.5
 pydantic-settings==2.7.1
 pyannote.audio==3.3.2
+matplotlib==3.8.4
