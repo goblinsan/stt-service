@@ -233,6 +233,42 @@ class TestPyannotePipelineLoading:
             use_auth_token="hf_test",
         )
 
+    def test_pipeline_none_result_raises_clear_runtime_error(self):
+        import types
+        from unittest.mock import MagicMock, patch
+        import pytest
+        import src.diarization as d
+
+        d._pipeline = None
+        d._last_used = 0.0
+        d._validated_repo_access.clear()
+
+        def fake_from_pretrained(model_id, token=None):
+            return None
+
+        pipeline_cls = MagicMock()
+        pipeline_cls.from_pretrained = MagicMock(side_effect=fake_from_pretrained)
+
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        fake_pyannote_audio = types.SimpleNamespace(Pipeline=pipeline_cls)
+        fake_pyannote_pkg = types.SimpleNamespace(audio=fake_pyannote_audio)
+        fake_hf = types.SimpleNamespace(
+            model_info=MagicMock(return_value=types.SimpleNamespace(id="pyannote/speaker-diarization-3.1")),
+        )
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "torch": mock_torch,
+                "pyannote": fake_pyannote_pkg,
+                "pyannote.audio": fake_pyannote_audio,
+                "huggingface_hub": fake_hf,
+            },
+        ):
+            with pytest.raises(RuntimeError, match="returned no loader result"):
+                d.get_pipeline("hf_test", "/tmp", "pyannote/speaker-diarization-3.1")
+
 
 class TestDiarizeValidation:
     """Verify that diarize() validates speaker count arguments before calling the pipeline."""

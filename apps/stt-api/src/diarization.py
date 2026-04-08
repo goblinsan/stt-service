@@ -234,6 +234,15 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
             pyannote_model,
             **from_pretrained_kwargs,
         )
+        if pipeline is None:
+            raise RuntimeError(
+                "Pyannote pipeline returned no loader result. "
+                "This usually means the Hugging Face token still lacks access to one of the "
+                f"required gated repos for {pyannote_model}. "
+                "For speaker-diarization-3.1, ensure both "
+                "https://huggingface.co/pyannote/speaker-diarization-3.1 and "
+                "https://huggingface.co/pyannote/segmentation-3.0 have their usage conditions accepted."
+            )
 
         try:
             import torch
