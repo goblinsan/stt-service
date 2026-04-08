@@ -116,6 +116,32 @@ class TestDiarizeSignature:
 
 
 class TestPyannotePipelineLoading:
+    def test_hf_hub_download_alias_maps_use_auth_token(self):
+        import types
+        import src.diarization as d
+
+        calls = []
+
+        def fake_hf_hub_download(*args, token=None, **kwargs):
+            calls.append({"args": args, "token": token, "kwargs": kwargs})
+            return "/tmp/model"
+
+        fake_hf_hub = types.SimpleNamespace(hf_hub_download=fake_hf_hub_download)
+
+        from unittest.mock import patch
+        with patch.dict("sys.modules", {"huggingface_hub": fake_hf_hub}):
+            d._ensure_hf_hub_legacy_auth_alias()
+            result = fake_hf_hub.hf_hub_download("repo", "weights.bin", use_auth_token="hf_test")
+
+        assert result == "/tmp/model"
+        assert calls == [
+            {
+                "args": ("repo", "weights.bin"),
+                "token": "hf_test",
+                "kwargs": {},
+            }
+        ]
+
     def _run_pipeline_load(self, auth_param_name):
         import types
         from unittest.mock import MagicMock, patch

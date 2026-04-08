@@ -72,6 +72,39 @@ def _ensure_reaper(idle_timeout_sec: int) -> None:
     _reaper_thread = t
 
 
+def _ensure_hf_hub_legacy_auth_alias() -> None:
+    """Patch huggingface_hub to accept legacy ``use_auth_token`` calls.
+
+    Some pyannote releases still forward ``use_auth_token`` to
+    ``huggingface_hub.hf_hub_download`` even when the installed hub client only
+    accepts ``token``. Patch the module before importing pyannote so any
+    ``from huggingface_hub import hf_hub_download`` inside pyannote receives the
+    compatibility wrapper.
+    """
+    try:
+        import huggingface_hub
+    except ImportError:
+        return
+
+    download = getattr(huggingface_hub, "hf_hub_download", None)
+    if download is None:
+        return
+
+    params = inspect.signature(download).parameters
+    if "use_auth_token" in params:
+        return
+    if getattr(download, "_supports_legacy_use_auth_token", False):
+        return
+
+    def compat_hf_hub_download(*args, use_auth_token=None, **kwargs):
+        if use_auth_token is not None and "token" not in kwargs:
+            kwargs["token"] = use_auth_token
+        return download(*args, **kwargs)
+
+    compat_hf_hub_download._supports_legacy_use_auth_token = True
+    huggingface_hub.hf_hub_download = compat_hf_hub_download
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -123,6 +156,7 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
             return _pipeline
 
         try:
+            _ensure_hf_hub_legacy_auth_alias()
             from pyannote.audio import Pipeline
         except ImportError as exc:
             raise RuntimeError(
