@@ -12,6 +12,95 @@ function formatSeconds(value?: number | null): string {
   return value == null ? 'n/a' : `${value.toFixed(1)}s`;
 }
 
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function toExportStem(filename?: string): string {
+  if (!filename) return 'transcript';
+  return filename.replace(/\.[^/.]+$/, '') || 'transcript';
+}
+
+function speakerName(label: string, aliases: Record<string, string>): string {
+  const alias = aliases[label]?.trim();
+  return alias || label;
+}
+
+function csvCell(value: string | number | null | undefined): string {
+  const text = value == null ? '' : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function buildTranscriptText(result: TranscribeResult, aliases: Record<string, string>): string {
+  const hasSpeakers = result.segments.some((segment) => Boolean(segment.speaker));
+  if (!hasSpeakers) return result.text;
+  return result.segments
+    .map((segment) => {
+      const parts = [
+        `[${formatTime(segment.start)} - ${formatTime(segment.end)}]`,
+      ];
+      if (segment.speaker) {
+        parts.push(`${speakerName(segment.speaker, aliases)}:`);
+      }
+      parts.push(segment.text);
+      return parts.join(' ');
+    })
+    .join('\n');
+}
+
+function buildExportText(result: TranscribeResult, aliases: Record<string, string>): string {
+  const lines = [
+    `Language: ${result.language} (${(result.language_probability * 100).toFixed(0)}%)`,
+    `Duration: ${formatTime(result.duration)}`,
+    `Processed in: ${result.processing_time.toFixed(1)}s`,
+    `Whisper: ${formatSeconds(result.whisper_time)}`,
+    `Diarization: ${formatSeconds(result.diarization_time)}`,
+    '',
+    buildTranscriptText(result, aliases),
+  ];
+  return lines.join('\n');
+}
+
+function buildExportCsv(result: TranscribeResult, aliases: Record<string, string>): string {
+  const header = [
+    'segment_id',
+    'start_seconds',
+    'end_seconds',
+    'speaker_id',
+    'speaker_name',
+    'text',
+  ];
+  const rows = result.segments.map((segment) => [
+    segment.id,
+    segment.start.toFixed(3),
+    segment.end.toFixed(3),
+    segment.speaker ?? '',
+    segment.speaker ? speakerName(segment.speaker, aliases) : '',
+    segment.text,
+  ]);
+  return [header, ...rows]
+    .map((row) => row.map((cell) => csvCell(cell)).join(','))
+    .join('\n');
+}
+
+function buildExportJson(result: TranscribeResult, aliases: Record<string, string>): string {
+  return JSON.stringify({
+    ...result,
+    speaker_aliases: aliases,
+    export_segments: result.segments.map((segment) => ({
+      ...segment,
+      speaker_name: segment.speaker ? speakerName(segment.speaker, aliases) : null,
+    })),
+    export_text: buildTranscriptText(result, aliases),
+  }, null, 2);
+}
+
 /** Generate a deterministic hue from a speaker label string. */
 function speakerHue(label: string): number {
   let hash = 0;
@@ -239,7 +328,15 @@ function Options({
   );
 }
 
-function SpeakerSummaryView({ speakers }: { speakers: SpeakerSummary[] }) {
+function SpeakerSummaryView({
+  speakers,
+  aliases,
+  onAliasChange,
+}: {
+  speakers: SpeakerSummary[];
+  aliases: Record<string, string>;
+  onAliasChange: (speakerId: string, value: string) => void;
+}) {
   if (!speakers.length) return null;
   return (
     <div className="speaker-summary">
@@ -248,6 +345,7 @@ function SpeakerSummaryView({ speakers }: { speakers: SpeakerSummary[] }) {
         <thead>
           <tr>
             <th>Speaker</th>
+            <th>Rename</th>
             <th>Segments</th>
             <th>Total Duration</th>
           </tr>
@@ -263,6 +361,15 @@ function SpeakerSummaryView({ speakers }: { speakers: SpeakerSummary[] }) {
                   {s.id}
                 </span>
               </td>
+              <td>
+                <input
+                  className="speaker-alias-input"
+                  type="text"
+                  value={aliases[s.id] ?? ''}
+                  onChange={(e) => onAliasChange(s.id, e.target.value)}
+                  placeholder="e.g. Mom"
+                />
+              </td>
               <td>{s.segment_count}</td>
               <td>{formatTime(s.total_duration)}</td>
             </tr>
@@ -273,8 +380,39 @@ function SpeakerSummaryView({ speakers }: { speakers: SpeakerSummary[] }) {
   );
 }
 
-function ResultView({ result }: { result: TranscribeResult }) {
+function ResultView({ result, sourceFileName }: { result: TranscribeResult; sourceFileName?: string }) {
   const [view, setView] = useState<'text' | 'segments' | 'json'>('text');
+  const [speakerAliases, setSpeakerAliases] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const nextAliases: Record<string, string> = {};
+    const speakerIds = new Set<string>();
+    for (const speaker of result.speakers ?? []) speakerIds.add(speaker.id);
+    for (const segment of result.segments) {
+      if (segment.speaker) speakerIds.add(segment.speaker);
+    }
+    for (const speakerId of speakerIds) nextAliases[speakerId] = '';
+    setSpeakerAliases(nextAliases);
+  }, [result]);
+
+  const transcriptText = buildTranscriptText(result, speakerAliases);
+  const exportStem = toExportStem(sourceFileName);
+
+  const handleAliasChange = useCallback((speakerId: string, value: string) => {
+    setSpeakerAliases((current) => ({ ...current, [speakerId]: value }));
+  }, []);
+
+  const handleExportText = useCallback(() => {
+    downloadTextFile(`${exportStem}-transcript.txt`, buildExportText(result, speakerAliases), 'text/plain;charset=utf-8');
+  }, [exportStem, result, speakerAliases]);
+
+  const handleExportCsv = useCallback(() => {
+    downloadTextFile(`${exportStem}-segments.csv`, buildExportCsv(result, speakerAliases), 'text/csv;charset=utf-8');
+  }, [exportStem, result, speakerAliases]);
+
+  const handleExportJson = useCallback(() => {
+    downloadTextFile(`${exportStem}-transcript.json`, buildExportJson(result, speakerAliases), 'application/json;charset=utf-8');
+  }, [exportStem, result, speakerAliases]);
 
   return (
     <div className="result-panel">
@@ -286,6 +424,17 @@ function ResultView({ result }: { result: TranscribeResult }) {
         <span>Diarization: <strong>{formatSeconds(result.diarization_time)}</strong></span>
         <span>Speed: <strong>{(result.duration / result.processing_time).toFixed(1)}x</strong> realtime</span>
       </div>
+      <div className="export-toolbar">
+        <div className="export-copy">
+          <strong>Export</strong>
+          <span>Rename speakers below, then download the result.</span>
+        </div>
+        <div className="export-actions">
+          <button type="button" onClick={handleExportText}>TXT</button>
+          <button type="button" onClick={handleExportCsv}>CSV</button>
+          <button type="button" onClick={handleExportJson}>JSON</button>
+        </div>
+      </div>
       <div className="result-tabs">
         <button className={view === 'text' ? 'active' : ''} onClick={() => setView('text')}>Full Text</button>
         <button className={view === 'segments' ? 'active' : ''} onClick={() => setView('segments')}>Segments</button>
@@ -293,8 +442,8 @@ function ResultView({ result }: { result: TranscribeResult }) {
       </div>
       {view === 'text' && (
         <div className="result-text">
-          <p>{result.text}</p>
-          <button className="copy-btn" onClick={() => navigator.clipboard.writeText(result.text)}>Copy</button>
+          <p>{transcriptText}</p>
+          <button className="copy-btn" onClick={() => navigator.clipboard.writeText(transcriptText)}>Copy</button>
         </div>
       )}
       {view === 'segments' && (
@@ -307,7 +456,7 @@ function ResultView({ result }: { result: TranscribeResult }) {
                   className="seg-speaker"
                   style={{ '--speaker-hue': speakerHue(seg.speaker) } as React.CSSProperties}
                 >
-                  {seg.speaker}
+                  {speakerName(seg.speaker, speakerAliases)}
                 </span>
               )}
               <span className="seg-text">{seg.text}</span>
@@ -316,10 +465,14 @@ function ResultView({ result }: { result: TranscribeResult }) {
         </div>
       )}
       {view === 'json' && (
-        <pre className="result-json">{JSON.stringify(result, null, 2)}</pre>
+        <pre className="result-json">{buildExportJson(result, speakerAliases)}</pre>
       )}
       {result.speakers && result.speakers.length > 0 && (
-        <SpeakerSummaryView speakers={result.speakers} />
+        <SpeakerSummaryView
+          speakers={result.speakers}
+          aliases={speakerAliases}
+          onAliasChange={handleAliasChange}
+        />
       )}
     </div>
   );
@@ -457,7 +610,7 @@ export function App() {
         </div>
 
         {error && <div className="error-banner">{error}</div>}
-        {result && <ResultView result={result} />}
+        {result && <ResultView result={result} sourceFileName={file?.name} />}
       </main>
     </div>
   );

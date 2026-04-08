@@ -317,6 +317,52 @@ body {
 }
 .result-meta strong { color: var(--text); }
 
+.export-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(108, 152, 148, 0.08);
+}
+
+.export-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.export-copy strong {
+  color: var(--accent-strong);
+  font-size: 0.92rem;
+}
+
+.export-copy span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.export-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.export-actions button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.export-actions button:hover {
+  background: var(--bg);
+}
+
 .result-tabs {
   display: flex;
   border-bottom: 1px solid var(--line);
@@ -432,6 +478,17 @@ body {
   border-bottom: none;
 }
 
+.speaker-alias-input {
+  width: 100%;
+  min-width: 8rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: var(--panel);
+  color: var(--text);
+}
+
 .result-json {
   padding: 1rem;
   margin: 0;
@@ -456,6 +513,19 @@ body {
 
   .service-info {
     justify-content: flex-start;
+  }
+
+  .export-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .export-actions {
+    width: 100%;
+  }
+
+  .export-actions button {
+    flex: 1;
   }
 
   .seg-time {
