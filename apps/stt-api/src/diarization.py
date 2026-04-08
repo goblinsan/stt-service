@@ -28,6 +28,7 @@ _last_used: float = 0.0
 
 # Background reaper thread – created lazily, daemon so it never blocks exit.
 _reaper_thread: threading.Thread | None = None
+_validated_repo_access: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,39 @@ def _load_audio_for_pyannote(audio_path: str) -> dict:
     }
 
 
+def _required_pyannote_repos(pyannote_model: str) -> list[str]:
+    repos = [pyannote_model]
+    if pyannote_model == "pyannote/speaker-diarization-3.1":
+        repos.append("pyannote/segmentation-3.0")
+    return repos
+
+
+def _validate_pyannote_repo_access(hf_token: str, pyannote_model: str) -> None:
+    """Verify the token can access all gated repos needed by pyannote."""
+    try:
+        from huggingface_hub import model_info
+    except ImportError:
+        return
+
+    for repo_id in _required_pyannote_repos(pyannote_model):
+        if repo_id in _validated_repo_access:
+            continue
+        try:
+            model_info(repo_id=repo_id, token=hf_token)
+        except Exception as exc:
+            error_name = exc.__class__.__name__
+            if error_name in {"GatedRepoError", "RepositoryNotFoundError", "HfHubHTTPError"}:
+                raise RuntimeError(
+                    "Hugging Face access is not ready for pyannote diarization. "
+                    f"Ensure your token can access {repo_id} and accept the usage conditions at "
+                    f"https://huggingface.co/{repo_id} . "
+                    "For speaker-diarization-3.1 you must also accept the linked "
+                    "pyannote/segmentation-3.0 model."
+                ) from exc
+            raise
+        _validated_repo_access.add(repo_id)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -179,6 +213,7 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
             return _pipeline
 
         try:
+            _validate_pyannote_repo_access(hf_token, pyannote_model)
             _ensure_hf_hub_legacy_auth_alias()
             from pyannote.audio import Pipeline
         except ImportError as exc:

@@ -39,6 +39,7 @@ This repository provides GPU-backed speech-to-text and diarization services and 
 - Do not leave GPU-runtime dependencies open-ended across major versions. For `torch`, `torchaudio`, and `pyannote.audio`, prefer explicit pins that match the documented CUDA/driver target instead of `>=` ranges.
 - Treat `pyannote.audio` and `huggingface_hub` as a compatibility pair. If one changes, verify Hugging Face auth still works through the full diarization path instead of assuming `token` or `use_auth_token` is stable across both packages.
 - Prefer preloading audio into memory for pyannote inference instead of relying on its built-in file decoding path. Decoder/runtime warnings on the GPU node are a real deployment constraint, not harmless noise.
+- For the default `pyannote/speaker-diarization-3.1` pipeline, remember the linked gated dependency on `pyannote/segmentation-3.0`. Operator docs and error messages should say that explicitly instead of only mentioning `STT_HF_TOKEN`.
 - GPU status/reporting endpoints must degrade safely. Never let optional CUDA metadata calls take down `/api/info` or other readiness surfaces when the driver/runtime stack is imperfect.
 
 ## Validation

@@ -116,6 +116,40 @@ class TestDiarizeSignature:
 
 
 class TestPyannotePipelineLoading:
+    def test_required_pyannote_repos_include_segmentation_dependency(self):
+        import src.diarization as d
+
+        assert d._required_pyannote_repos("pyannote/speaker-diarization-3.1") == [
+            "pyannote/speaker-diarization-3.1",
+            "pyannote/segmentation-3.0",
+        ]
+        assert d._required_pyannote_repos("custom/model") == ["custom/model"]
+
+    def test_repo_access_validation_raises_clear_gated_error(self):
+        import types
+        from unittest.mock import patch
+        import pytest
+        import src.diarization as d
+
+        d._validated_repo_access.clear()
+
+        class GatedRepoError(Exception):
+            pass
+
+        def fake_model_info(repo_id=None, token=None):
+            if repo_id == "pyannote/segmentation-3.0":
+                raise GatedRepoError("gated")
+            return types.SimpleNamespace(id=repo_id)
+
+        fake_hf = types.SimpleNamespace(model_info=fake_model_info)
+
+        with patch.dict("sys.modules", {"huggingface_hub": fake_hf}):
+            with pytest.raises(RuntimeError, match="pyannote/segmentation-3.0"):
+                d._validate_pyannote_repo_access(
+                    "hf_test",
+                    "pyannote/speaker-diarization-3.1",
+                )
+
     def test_hf_hub_download_alias_maps_use_auth_token(self):
         import types
         import src.diarization as d
@@ -149,6 +183,7 @@ class TestPyannotePipelineLoading:
 
         d._pipeline = None
         d._last_used = 0.0
+        d._validated_repo_access.clear()
 
         mock_pipeline = MagicMock()
         pipeline_cls = MagicMock()
@@ -166,10 +201,18 @@ class TestPyannotePipelineLoading:
         mock_torch.cuda.is_available.return_value = False
         fake_pyannote_audio = types.SimpleNamespace(Pipeline=pipeline_cls)
         fake_pyannote_pkg = types.SimpleNamespace(audio=fake_pyannote_audio)
+        fake_hf = types.SimpleNamespace(
+            model_info=MagicMock(return_value=types.SimpleNamespace(id="pyannote/test")),
+        )
 
         with patch.dict(
             "sys.modules",
-            {"torch": mock_torch, "pyannote": fake_pyannote_pkg, "pyannote.audio": fake_pyannote_audio},
+            {
+                "torch": mock_torch,
+                "pyannote": fake_pyannote_pkg,
+                "pyannote.audio": fake_pyannote_audio,
+                "huggingface_hub": fake_hf,
+            },
         ):
             result = d.get_pipeline("hf_test", "/tmp", "pyannote/test")
 

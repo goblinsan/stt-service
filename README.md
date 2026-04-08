@@ -57,6 +57,12 @@ Open `http://localhost:5101` — the UI is served through nginx with the API at 
 | `STT_PYANNOTE_MODEL` | `pyannote/speaker-diarization-3.1` | Pyannote model ID |
 | `STT_WARMUP_PYANNOTE` | `true` | Pre-warm pyannote at startup; set `false` for lazy-load |
 
+Before enabling diarization with the default `pyannote/speaker-diarization-3.1`
+pipeline, accept the usage conditions for both:
+
+- `https://huggingface.co/pyannote/speaker-diarization-3.1`
+- `https://huggingface.co/pyannote/segmentation-3.0`
+
 ### VRAM management
 
 | Variable | Default | Description |
