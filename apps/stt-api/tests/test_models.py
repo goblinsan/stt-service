@@ -116,7 +116,7 @@ class TestDiarizeSignature:
 
 
 class TestPyannotePipelineLoading:
-    def test_pipeline_uses_token_kwarg(self):
+    def _run_pipeline_load(self, auth_param_name):
         import types
         from unittest.mock import MagicMock, patch
         import src.diarization as d
@@ -127,6 +127,14 @@ class TestPyannotePipelineLoading:
         mock_pipeline = MagicMock()
         pipeline_cls = MagicMock()
         pipeline_cls.from_pretrained.return_value = mock_pipeline
+
+        if auth_param_name == "token":
+            def fake_from_pretrained(model_id, token=None):
+                return mock_pipeline
+        else:
+            def fake_from_pretrained(model_id, use_auth_token=None):
+                return mock_pipeline
+        pipeline_cls.from_pretrained = MagicMock(side_effect=fake_from_pretrained)
 
         mock_torch = MagicMock()
         mock_torch.cuda.is_available.return_value = False
@@ -139,8 +147,22 @@ class TestPyannotePipelineLoading:
         ):
             result = d.get_pipeline("hf_test", "/tmp", "pyannote/test")
 
+        return result, mock_pipeline, pipeline_cls
+
+    def test_pipeline_uses_token_kwarg_when_supported(self):
+        result, mock_pipeline, pipeline_cls = self._run_pipeline_load("token")
+
         assert result is mock_pipeline
         pipeline_cls.from_pretrained.assert_called_once_with("pyannote/test", token="hf_test")
+
+    def test_pipeline_uses_legacy_use_auth_token_kwarg_when_needed(self):
+        result, mock_pipeline, pipeline_cls = self._run_pipeline_load("use_auth_token")
+
+        assert result is mock_pipeline
+        pipeline_cls.from_pretrained.assert_called_once_with(
+            "pyannote/test",
+            use_auth_token="hf_test",
+        )
 
 
 class TestDiarizeValidation:

@@ -12,6 +12,7 @@ occupies.  It will be transparently reloaded on the next diarize request.
 """
 
 import logging
+import inspect
 import threading
 import time
 
@@ -130,9 +131,16 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
             ) from exc
 
         logger.info("Loading %s — first run downloads model weights", pyannote_model)
+        from_pretrained_kwargs = {}
+        from_pretrained_params = inspect.signature(Pipeline.from_pretrained).parameters
+        if "token" in from_pretrained_params:
+            from_pretrained_kwargs["token"] = hf_token
+        elif "use_auth_token" in from_pretrained_params:
+            from_pretrained_kwargs["use_auth_token"] = hf_token
+
         pipeline = Pipeline.from_pretrained(
             pyannote_model,
-            token=hf_token,
+            **from_pretrained_kwargs,
         )
 
         try:
