@@ -37,6 +37,7 @@ This repository provides GPU-backed speech-to-text and diarization services and 
 - If adding a new model path or warmup mode, keep compose wiring and operator docs synchronized.
 - Avoid changes that silently force large-v3 + pyannote co-residency without documenting the impact.
 - Do not leave GPU-runtime dependencies open-ended across major versions. For `torch`, `torchaudio`, and `pyannote.audio`, prefer explicit pins that match the documented CUDA/driver target instead of `>=` ranges.
+- GPU status/reporting endpoints must degrade safely. Never let optional CUDA metadata calls take down `/api/info` or other readiness surfaces when the driver/runtime stack is imperfect.
 
 ## Validation
 

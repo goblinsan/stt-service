@@ -45,6 +45,9 @@ def _resolve_device() -> tuple[str, str]:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             device = "cpu"
+        except Exception:
+            logger.exception("CUDA auto-detection failed; falling back to CPU")
+            device = "cpu"
 
     if compute_type == "auto":
         compute_type = "float16" if device == "cuda" else "int8"
@@ -258,4 +261,3 @@ def transcribe_audio(
         diarization_time=diarization_time,
         speakers=speakers,
     )
-

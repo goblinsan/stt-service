@@ -107,6 +107,8 @@ async def info():
             }
     except ImportError:
         pass
+    except Exception:
+        logger.exception("GPU introspection failed in /api/info")
 
     return {
         "engine": settings.engine,
