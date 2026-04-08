@@ -28,6 +28,7 @@ This repository provides GPU-backed speech-to-text and diarization services and 
   - UI rendering
   - `docs/control-plane-followup.md`
   - integration docs under `docs/integration/`
+- Treat the web tester as part of the product contract, not a demo. If the API gains a new operator-facing control or readiness state, `apps/stt-ui/` should expose it clearly enough that a human can verify the feature from the browser.
 - Do not claim gateway-control-plane, gateway-api, or chat-platform changes are complete unless they were actually implemented in those repositories.
 
 ## VRAM and co-tenancy

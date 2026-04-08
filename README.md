@@ -22,9 +22,11 @@ stt-service/
 - Language auto-detection or manual selection
 - Translate-to-English mode
 - Word-level timestamps
+- Initial prompt field for domain hints / glossary biasing
 - Segment-by-segment timeline view
 - JSON export of full results
 - Speaker diarization via [pyannote.audio](https://github.com/pyannote/pyannote-audio)
+- Browser tester shows live model / diarization readiness, GPU status, and speaker summary
 
 ## Quick start (Docker)
 
@@ -165,4 +167,3 @@ The production engine is **faster-whisper (large-v3)**.  See
 [docs/engine-decision.md](docs/engine-decision.md) for benchmark data, VRAM
 budget analysis, and the rationale behind this decision.  A rollback plan is
 also documented there.
-

@@ -8,6 +8,10 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}.${ms}`;
 }
 
+function formatSeconds(value?: number | null): string {
+  return value == null ? 'n/a' : `${value.toFixed(1)}s`;
+}
+
 /** Generate a deterministic hue from a speaker label string. */
 function speakerHue(label: string): number {
   let hash = 0;
@@ -24,8 +28,8 @@ function DropZone({ onFile, disabled }: { onFile: (f: File) => void; disabled: b
       e.preventDefault();
       setDragOver(false);
       if (disabled) return;
-      const file = e.dataTransfer.files[0];
-      if (file) onFile(file);
+      const droppedFile = e.dataTransfer.files[0];
+      if (droppedFile) onFile(droppedFile);
     },
     [onFile, disabled],
   );
@@ -41,14 +45,91 @@ function DropZone({ onFile, disabled }: { onFile: (f: File) => void; disabled: b
       <input
         ref={inputRef}
         type="file"
-        accept="audio/*,video/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.mp4,.aac,.wma"
+        accept="audio/*,video/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.mp4,.aac,.wma,.aif,.aiff"
         style={{ display: 'none' }}
         onChange={(e) => { if (e.target.files?.[0]) onFile(e.target.files[0]); }}
       />
       <div className="drop-icon">🎙</div>
       <div className="drop-label">Drop an audio file here or click to browse</div>
-      <div className="drop-hint">WAV, MP3, FLAC, OGG, M4A, WebM, MP4</div>
+      <div className="drop-hint">WAV, MP3, FLAC, OGG, M4A, WebM, MP4, AIF, AIFF</div>
     </div>
+  );
+}
+
+function CapabilityCard({
+  title,
+  value,
+  detail,
+  tone = 'neutral',
+}: {
+  title: string;
+  value: string;
+  detail?: string;
+  tone?: 'neutral' | 'ready' | 'warn';
+}) {
+  return (
+    <div className={`capability-card capability-card-${tone}`}>
+      <span className="capability-title">{title}</span>
+      <strong className="capability-value">{value}</strong>
+      {detail && <span className="capability-detail">{detail}</span>}
+    </div>
+  );
+}
+
+function ServiceCapabilities({
+  info,
+  refreshing,
+  onRefresh,
+}: {
+  info: ServiceInfo;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="capability-panel">
+      <div className="capability-header">
+        <div>
+          <h2>Service Capabilities</h2>
+          <p>Live readiness and GPU usage for this STT + diarization node.</p>
+        </div>
+        <button type="button" className="refresh-btn" onClick={onRefresh} disabled={refreshing}>
+          {refreshing ? 'Refreshing…' : 'Refresh status'}
+        </button>
+      </div>
+      <div className="capability-grid">
+        <CapabilityCard
+          title="Engine"
+          value={`${info.engine} · ${info.model_size}`}
+          detail={`${info.device} / ${info.compute_type}`}
+          tone={info.model_loaded ? 'ready' : 'warn'}
+        />
+        <CapabilityCard
+          title="Whisper Model"
+          value={info.model_loaded ? 'Ready' : 'Loading'}
+          detail={info.model_loaded ? 'Transcription requests can run now.' : 'Background warmup is still in progress.'}
+          tone={info.model_loaded ? 'ready' : 'warn'}
+        />
+        <CapabilityCard
+          title="Diarization"
+          value={!info.diarization.available ? 'Disabled' : info.diarization.ready ? 'Ready' : 'Lazy / warming'}
+          detail={!info.diarization.available
+            ? 'Set STT_HF_TOKEN to enable pyannote speaker attribution.'
+            : `${info.diarization.model}${info.diarization.whisper_model_override ? ` · whisper override ${info.diarization.whisper_model_override}` : ''}`}
+          tone={info.diarization.available && info.diarization.ready ? 'ready' : info.diarization.available ? 'warn' : 'neutral'}
+        />
+        <CapabilityCard
+          title="GPU / Upload"
+          value={info.gpu ? `${info.gpu.name}` : 'CPU / unknown GPU'}
+          detail={`${info.gpu ? `${info.gpu.vram_used_mb} / ${info.gpu.vram_total_mb} MB used` : 'No GPU details'} · max upload ${info.max_upload_mb} MB`}
+        />
+      </div>
+      {info.diarization.available && (
+        <p className="capability-note">
+          Pyannote idle timeout: <strong>{info.diarization.idle_timeout_sec ?? 'n/a'}s</strong>.
+          {!info.diarization.ready && ' The first diarized request may take longer while the pipeline loads.'}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -58,82 +139,102 @@ function Options({
   wordTimestamps, setWordTimestamps,
   diarize, setDiarize,
   diarizationAvailable,
+  diarizationReady,
   minSpeakers, setMinSpeakers,
   maxSpeakers, setMaxSpeakers,
+  initialPrompt, setInitialPrompt,
 }: {
   language: string; setLanguage: (v: string) => void;
   task: string; setTask: (v: string) => void;
   wordTimestamps: boolean; setWordTimestamps: (v: boolean) => void;
   diarize: boolean; setDiarize: (v: boolean) => void;
   diarizationAvailable: boolean;
+  diarizationReady: boolean;
   minSpeakers: string; setMinSpeakers: (v: string) => void;
   maxSpeakers: string; setMaxSpeakers: (v: string) => void;
+  initialPrompt: string; setInitialPrompt: (v: string) => void;
 }) {
   return (
-    <div className="options-row">
-      <label>
-        <span>Language</span>
-        <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-          <option value="">Auto-detect</option>
-          <option value="en">English</option>
-          <option value="es">Spanish</option>
-          <option value="fr">French</option>
-          <option value="de">German</option>
-          <option value="it">Italian</option>
-          <option value="pt">Portuguese</option>
-          <option value="ja">Japanese</option>
-          <option value="ko">Korean</option>
-          <option value="zh">Chinese</option>
-          <option value="ru">Russian</option>
-          <option value="ar">Arabic</option>
-        </select>
-      </label>
-      <label>
-        <span>Task</span>
-        <select value={task} onChange={(e) => setTask(e.target.value)}>
-          <option value="transcribe">Transcribe</option>
-          <option value="translate">Translate to English</option>
-        </select>
-      </label>
-      <label className="check-label">
-        <input type="checkbox" checked={wordTimestamps} onChange={(e) => setWordTimestamps(e.target.checked)} />
-        <span>Word timestamps</span>
-      </label>
-      <label className={`check-label ${!diarizationAvailable ? 'disabled-option' : ''}`} title={!diarizationAvailable ? 'Set STT_HF_TOKEN to enable speaker diarization' : ''}>
-        <input
-          type="checkbox"
-          checked={diarize}
-          disabled={!diarizationAvailable}
-          onChange={(e) => setDiarize(e.target.checked)}
+    <div className="options-stack">
+      <div className="options-row">
+        <label>
+          <span>Language</span>
+          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="zh">Chinese</option>
+            <option value="ru">Russian</option>
+            <option value="ar">Arabic</option>
+          </select>
+        </label>
+        <label>
+          <span>Task</span>
+          <select value={task} onChange={(e) => setTask(e.target.value)}>
+            <option value="transcribe">Transcribe</option>
+            <option value="translate">Translate to English</option>
+          </select>
+        </label>
+        <label className="check-label">
+          <input type="checkbox" checked={wordTimestamps} onChange={(e) => setWordTimestamps(e.target.checked)} />
+          <span>Word timestamps</span>
+        </label>
+        <label className={`check-label ${!diarizationAvailable ? 'disabled-option' : ''}`} title={!diarizationAvailable ? 'Set STT_HF_TOKEN to enable speaker diarization' : ''}>
+          <input
+            type="checkbox"
+            checked={diarize}
+            disabled={!diarizationAvailable}
+            onChange={(e) => setDiarize(e.target.checked)}
+          />
+          <span>Speaker diarization</span>
+        </label>
+        {diarize && (
+          <>
+            <label>
+              <span>Min speakers</span>
+              <input
+                type="number"
+                min={1}
+                value={minSpeakers}
+                onChange={(e) => setMinSpeakers(e.target.value)}
+                placeholder="auto"
+              />
+            </label>
+            <label>
+              <span>Max speakers</span>
+              <input
+                type="number"
+                min={1}
+                value={maxSpeakers}
+                onChange={(e) => setMaxSpeakers(e.target.value)}
+                placeholder="auto"
+              />
+            </label>
+          </>
+        )}
+      </div>
+      <label className="prompt-field">
+        <span>Initial Prompt</span>
+        <textarea
+          rows={3}
+          value={initialPrompt}
+          onChange={(e) => setInitialPrompt(e.target.value)}
+          placeholder="Optional domain hint, glossary, or speaker context for Whisper."
         />
-        <span>Speaker diarization</span>
       </label>
-      {diarize && (
-        <>
-          <label>
-            <span>Min speakers</span>
-            <input
-              type="number"
-              min={1}
-              value={minSpeakers}
-              onChange={(e) => setMinSpeakers(e.target.value)}
-              placeholder="auto"
-              style={{ width: '5rem' }}
-            />
-          </label>
-          <label>
-            <span>Max speakers</span>
-            <input
-              type="number"
-              min={1}
-              value={maxSpeakers}
-              onChange={(e) => setMaxSpeakers(e.target.value)}
-              placeholder="auto"
-              style={{ width: '5rem' }}
-            />
-          </label>
-        </>
-      )}
+      <p className="option-note">
+        {!diarizationAvailable
+          ? 'Speaker diarization is disabled until STT_HF_TOKEN is configured.'
+          : diarizationReady
+            ? 'Pyannote is ready for diarized requests.'
+            : 'Pyannote will load on demand for the next diarized request.'}
+      </p>
     </div>
   );
 }
@@ -181,6 +282,8 @@ function ResultView({ result }: { result: TranscribeResult }) {
         <span>Language: <strong>{result.language}</strong> ({(result.language_probability * 100).toFixed(0)}%)</span>
         <span>Duration: <strong>{formatTime(result.duration)}</strong></span>
         <span>Processed in: <strong>{result.processing_time.toFixed(1)}s</strong></span>
+        <span>Whisper: <strong>{formatSeconds(result.whisper_time)}</strong></span>
+        <span>Diarization: <strong>{formatSeconds(result.diarization_time)}</strong></span>
         <span>Speed: <strong>{(result.duration / result.processing_time).toFixed(1)}x</strong> realtime</span>
       </div>
       <div className="result-tabs">
@@ -231,17 +334,28 @@ export function App() {
   const [diarize, setDiarize] = useState(false);
   const [minSpeakers, setMinSpeakers] = useState('');
   const [maxSpeakers, setMaxSpeakers] = useState('');
+  const [initialPrompt, setInitialPrompt] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [infoBusy, setInfoBusy] = useState(false);
   const [result, setResult] = useState<TranscribeResult | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchInfo().then(setInfo).catch(() => {});
+  const loadInfo = useCallback(async () => {
+    setInfoBusy(true);
+    try {
+      setInfo(await fetchInfo());
+    } finally {
+      setInfoBusy(false);
+    }
   }, []);
 
-  const handleFile = useCallback((f: File) => {
-    setFile(f);
+  useEffect(() => {
+    loadInfo().catch(() => {});
+  }, [loadInfo]);
+
+  const handleFile = useCallback((nextFile: File) => {
+    setFile(nextFile);
     setResult(null);
     setError('');
   }, []);
@@ -264,36 +378,47 @@ export function App() {
         language: language || undefined,
         task,
         word_timestamps: wordTimestamps,
+        initial_prompt: initialPrompt || undefined,
         diarize,
         min_speakers: parsedMin,
         max_speakers: parsedMax,
       }, setStatus);
       setResult(res);
       setStatus('');
+      await loadInfo();
     } catch (e: any) {
       setError(e.message || 'Transcription failed');
       setStatus('');
+      await loadInfo();
     } finally {
       setBusy(false);
     }
-  }, [file, language, task, wordTimestamps, diarize, minSpeakers, maxSpeakers]);
+  }, [file, language, task, wordTimestamps, initialPrompt, diarize, minSpeakers, maxSpeakers, loadInfo]);
 
   const diarizationAvailable = info?.diarization?.available ?? false;
+  const diarizationReady = info?.diarization?.ready ?? false;
 
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Speech to Text</h1>
+        <div>
+          <h1>Speech to Text</h1>
+          <p className="header-copy">Test transcription, translation, and diarization directly against the live GPU node.</p>
+        </div>
         {info && (
           <div className="service-info">
             <span className={`status-dot ${info.model_loaded ? 'ready' : 'idle'}`} />
-            <span>{info.model_size} on {info.device}</span>
+            <span>{info.engine} · {info.model_size}</span>
             {info.gpu && <span>{info.gpu.name}</span>}
           </div>
         )}
       </header>
 
       <main className="app-main">
+        {info && (
+          <ServiceCapabilities info={info} refreshing={infoBusy} onRefresh={() => { void loadInfo(); }} />
+        )}
+
         <DropZone onFile={handleFile} disabled={busy} />
 
         {file && (
@@ -310,8 +435,10 @@ export function App() {
           wordTimestamps={wordTimestamps} setWordTimestamps={setWordTimestamps}
           diarize={diarize} setDiarize={setDiarize}
           diarizationAvailable={diarizationAvailable}
+          diarizationReady={diarizationReady}
           minSpeakers={minSpeakers} setMinSpeakers={setMinSpeakers}
           maxSpeakers={maxSpeakers} setMaxSpeakers={setMaxSpeakers}
+          initialPrompt={initialPrompt} setInitialPrompt={setInitialPrompt}
         />
 
         <div className="action-row">
@@ -320,8 +447,13 @@ export function App() {
             disabled={!file || busy}
             onClick={handleTranscribe}
           >
-            {busy ? status || 'Processing...' : 'Transcribe'}
+            {busy ? status || 'Processing…' : diarize ? 'Transcribe + Diarize' : 'Transcribe'}
           </button>
+          <p className="action-note">
+            {diarize
+              ? 'Diarized runs may take longer on the first request while pyannote loads.'
+              : 'Use diarization when you need speaker labels and per-speaker summaries.'}
+          </p>
         </div>
 
         {error && <div className="error-banner">{error}</div>}

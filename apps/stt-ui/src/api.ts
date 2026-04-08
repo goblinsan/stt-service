@@ -20,17 +20,26 @@ export interface TranscribeResult {
   duration: number;
   segments: Segment[];
   processing_time: number;
+  whisper_time?: number | null;
+  diarization_time?: number | null;
   speakers?: SpeakerSummary[];
 }
 
 export interface ServiceInfo {
+  engine: string;
   model_size: string;
   device: string;
   compute_type: string;
   model_loaded: boolean;
-  gpu: { name: string; vram_total_mb: number; vram_used_mb: number } | null;
+  gpu: { name: string; vram_total_mb: number; vram_used_mb: number; vram_reserved_mb?: number } | null;
   max_upload_mb: number;
-  diarization: { available: boolean; model: string; ready: boolean };
+  diarization: {
+    available: boolean;
+    model: string;
+    ready: boolean;
+    idle_timeout_sec?: number;
+    whisper_model_override?: string | null;
+  };
 }
 
 export async function fetchInfo(): Promise<ServiceInfo> {
