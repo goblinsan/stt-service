@@ -232,7 +232,11 @@ class TestDiarizeValidation:
 
         mock_pipeline = MagicMock()
         mock_pipeline.return_value.itertracks.return_value = []
-        with patch("src.diarization.get_pipeline", return_value=mock_pipeline):
+        fake_audio = {"waveform": object(), "sample_rate": 16000}
+        with patch("src.diarization.get_pipeline", return_value=mock_pipeline), patch(
+            "src.diarization._load_audio_for_pyannote",
+            return_value=fake_audio,
+        ):
             result = diarize(
                 audio_path="/dev/null",
                 hf_token="tok",
@@ -242,4 +246,8 @@ class TestDiarizeValidation:
                 max_speakers=4,
             )
         assert result == []
-        mock_pipeline.assert_called_once_with("/dev/null", min_speakers=2, max_speakers=4)
+        mock_pipeline.assert_called_once_with(
+            fake_audio,
+            min_speakers=2,
+            max_speakers=4,
+        )

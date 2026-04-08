@@ -105,6 +105,29 @@ def _ensure_hf_hub_legacy_auth_alias() -> None:
     huggingface_hub.hf_hub_download = compat_hf_hub_download
 
 
+def _load_audio_for_pyannote(audio_path: str) -> dict:
+    """Return audio in the in-memory format pyannote recommends.
+
+    This avoids pyannote's internal torchcodec-based file decoding path, which
+    has proven brittle across CUDA / FFmpeg combinations on the GPU node.
+    """
+    try:
+        import torch
+        import torchaudio
+    except ImportError as exc:
+        raise RuntimeError(
+            "torchaudio is required for pyannote diarization audio loading"
+        ) from exc
+
+    waveform, sample_rate = torchaudio.load(audio_path)
+    if waveform.dtype != torch.float32:
+        waveform = waveform.to(torch.float32)
+    return {
+        "waveform": waveform,
+        "sample_rate": sample_rate,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -240,8 +263,10 @@ def diarize(
             f"min_speakers ({min_speakers}) must be <= max_speakers ({max_speakers})"
         )
 
+    audio_input = _load_audio_for_pyannote(audio_path)
+
     with _inference_lock:
-        result = pipeline(audio_path, **kwargs)
+        result = pipeline(audio_input, **kwargs)
         _last_used = time.monotonic()
 
     return [
