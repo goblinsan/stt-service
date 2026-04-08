@@ -12,8 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install PyTorch with CUDA 12.4 support first (needed by pyannote.audio)
-RUN pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+# Install a CUDA 12.4-compatible PyTorch stack first. Keep these pinned so
+# pyannote does not silently pull a newer CUDA runtime than the host driver can support.
+RUN pip3 install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch==2.5.1 \
+    torchaudio==2.5.1
 
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt

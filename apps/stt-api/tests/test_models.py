@@ -115,6 +115,34 @@ class TestDiarizeSignature:
         assert params["max_speakers"].default is None
 
 
+class TestPyannotePipelineLoading:
+    def test_pipeline_uses_token_kwarg(self):
+        import types
+        from unittest.mock import MagicMock, patch
+        import src.diarization as d
+
+        d._pipeline = None
+        d._last_used = 0.0
+
+        mock_pipeline = MagicMock()
+        pipeline_cls = MagicMock()
+        pipeline_cls.from_pretrained.return_value = mock_pipeline
+
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        fake_pyannote_audio = types.SimpleNamespace(Pipeline=pipeline_cls)
+        fake_pyannote_pkg = types.SimpleNamespace(audio=fake_pyannote_audio)
+
+        with patch.dict(
+            "sys.modules",
+            {"torch": mock_torch, "pyannote": fake_pyannote_pkg, "pyannote.audio": fake_pyannote_audio},
+        ):
+            result = d.get_pipeline("hf_test", "/tmp", "pyannote/test")
+
+        assert result is mock_pipeline
+        pipeline_cls.from_pretrained.assert_called_once_with("pyannote/test", token="hf_test")
+
+
 class TestDiarizeValidation:
     """Verify that diarize() validates speaker count arguments before calling the pipeline."""
 

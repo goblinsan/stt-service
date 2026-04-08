@@ -132,7 +132,7 @@ def get_pipeline(hf_token: str, model_cache_dir: str, pyannote_model: str):
         logger.info("Loading %s — first run downloads model weights", pyannote_model)
         pipeline = Pipeline.from_pretrained(
             pyannote_model,
-            use_auth_token=hf_token,
+            token=hf_token,
         )
 
         try:

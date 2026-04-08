@@ -66,6 +66,10 @@ Open `http://localhost:5101` — the UI is served through nginx with the API at 
 
 ## VRAM resource limits and co-tenancy
 
+The production image is pinned to a CUDA 12.4-compatible PyTorch stack. If the
+host NVIDIA driver is older than that target, diarization startup will fail even
+when `STT_HF_TOKEN` is configured correctly.
+
 Whisper large-v3 + pyannote combined can approach **5 GB VRAM**.  Use the
 following guidance when co-locating this service with other GPU workloads:
 
