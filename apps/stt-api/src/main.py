@@ -9,12 +9,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .engine import get_device_info, get_diarize_model, get_model, is_model_loaded, transcribe_audio
 from .models import (
+    AsyncJobAccepted,
+    AsyncJobStatusResponse,
     DiarizationInfo,
     HealthResponse,
     ModelInfo,
     RemoteTranscribeRequest,
     TranscribeResult,
 )
+from .jobs import get_job, submit_job
 from .remote_source import RemoteSourceError, download_remote_audio
 
 logger = logging.getLogger("stt.api")
@@ -166,6 +169,75 @@ def _validate_transcribe_options(task: str, diarize: bool):
         )
 
 
+def _write_temp_audio(content: bytes, suffix: str) -> str:
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        return tmp.name
+
+
+async def _run_local_file_job(
+    *,
+    tmp_path: str,
+    filename: str,
+    content_bytes: int,
+    language: str | None,
+    task: str,
+    word_timestamps: bool,
+    initial_prompt: str | None,
+    diarize: bool,
+    min_speakers: int | None,
+    max_speakers: int | None,
+) -> TranscribeResult:
+    try:
+        return await asyncio.to_thread(
+            _run_transcription,
+            tmp_path,
+            filename,
+            content_bytes,
+            language,
+            task,
+            word_timestamps,
+            initial_prompt,
+            diarize,
+            min_speakers,
+            max_speakers,
+        )
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+async def _run_remote_source_job(request: RemoteTranscribeRequest) -> TranscribeResult:
+    provisional_filename = request.filename or os.path.basename(request.source_url)
+    _validate_filename(provisional_filename)
+
+    try:
+        tmp_path, resolved_filename, total_bytes = await asyncio.to_thread(
+            download_remote_audio,
+            request.source_url,
+            request.filename,
+            settings.max_upload_mb * _BYTES_PER_MB,
+            settings.remote_source_timeout_sec,
+            settings.remote_source_allowed_hosts,
+        )
+        _validate_filename(resolved_filename)
+    except RemoteSourceError as e:
+        raise HTTPException(e.status_code, str(e))
+
+    return await _run_local_file_job(
+        tmp_path=tmp_path,
+        filename=resolved_filename,
+        content_bytes=total_bytes,
+        language=request.language,
+        task=request.task,
+        word_timestamps=request.word_timestamps,
+        initial_prompt=request.initial_prompt,
+        diarize=request.diarize,
+        min_speakers=request.min_speakers,
+        max_speakers=request.max_speakers,
+    )
+
+
 def _run_transcription(
     tmp_path: str,
     filename: str,
@@ -233,12 +305,10 @@ async def transcribe(
         raise HTTPException(413, f"File too large. Max {settings.max_upload_mb} MB")
 
     suffix = ext if ext else ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    tmp_path = _write_temp_audio(content, suffix)
 
     try:
-        return _run_transcription(
+        return await _run_local_file_job(
             tmp_path=tmp_path,
             filename=filename,
             content_bytes=len(content),
@@ -255,47 +325,78 @@ async def transcribe(
     except Exception as e:
         logger.exception("Transcription failed")
         raise HTTPException(500, f"Transcription failed: {str(e)}")
-    finally:
-        os.unlink(tmp_path)
 
 
 @app.post("/api/transcribe-from-url", response_model=TranscribeResult)
 async def transcribe_from_url(request: RemoteTranscribeRequest):
     _validate_transcribe_options(request.task, request.diarize)
 
-    provisional_filename = request.filename or os.path.basename(request.source_url)
-    _validate_filename(provisional_filename)
-
     try:
-        tmp_path, resolved_filename, total_bytes = await asyncio.to_thread(
-            download_remote_audio,
-            request.source_url,
-            request.filename,
-            settings.max_upload_mb * _BYTES_PER_MB,
-            settings.remote_source_timeout_sec,
-            settings.remote_source_allowed_hosts,
-        )
-        _validate_filename(resolved_filename)
-    except RemoteSourceError as e:
-        raise HTTPException(e.status_code, str(e))
-
-    try:
-        return _run_transcription(
-            tmp_path=tmp_path,
-            filename=resolved_filename,
-            content_bytes=total_bytes,
-            language=request.language,
-            task=request.task,
-            word_timestamps=request.word_timestamps,
-            initial_prompt=request.initial_prompt,
-            diarize=request.diarize,
-            min_speakers=request.min_speakers,
-            max_speakers=request.max_speakers,
-        )
+        return await _run_remote_source_job(request)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Remote transcription failed")
         raise HTTPException(500, f"Transcription failed: {str(e)}")
-    finally:
-        os.unlink(tmp_path)
+
+
+@app.post("/api/transcribe-async", response_model=AsyncJobAccepted, status_code=202)
+async def transcribe_async(
+    file: UploadFile = File(...),
+    language: str | None = Form(None),
+    task: str = Form("transcribe"),
+    word_timestamps: bool = Form(False),
+    initial_prompt: str | None = Form(None),
+    diarize: bool = Form(False),
+    min_speakers: int | None = Form(None),
+    max_speakers: int | None = Form(None),
+):
+    _validate_transcribe_options(task, diarize)
+
+    filename = file.filename or ""
+    ext = _validate_filename(filename)
+    content = await file.read()
+    if len(content) > settings.max_upload_mb * _BYTES_PER_MB:
+        raise HTTPException(413, f"File too large. Max {settings.max_upload_mb} MB")
+
+    tmp_path = _write_temp_audio(content, ext if ext else ".wav")
+    return await submit_job(
+        filename=filename,
+        runner=lambda: _run_local_file_job(
+            tmp_path=tmp_path,
+            filename=filename,
+            content_bytes=len(content),
+            language=language,
+            task=task,
+            word_timestamps=word_timestamps,
+            initial_prompt=initial_prompt,
+            diarize=diarize,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+        ),
+        retention_seconds=settings.async_job_retention_sec,
+    )
+
+
+@app.post("/api/transcribe-from-url-async", response_model=AsyncJobAccepted, status_code=202)
+async def transcribe_from_url_async(request: RemoteTranscribeRequest):
+    _validate_transcribe_options(request.task, request.diarize)
+
+    provisional_filename = request.filename or os.path.basename(request.source_url)
+    _validate_filename(provisional_filename)
+
+    return await submit_job(
+        filename=provisional_filename,
+        runner=lambda: _run_remote_source_job(request),
+        retention_seconds=settings.async_job_retention_sec,
+    )
+
+
+@app.get("/api/jobs/{job_id}", response_model=AsyncJobStatusResponse)
+async def get_async_job_status(job_id: str):
+    job = await get_job(job_id, settings.async_job_retention_sec)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job

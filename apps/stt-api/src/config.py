@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Remote-source ingest for large presigned uploads.
     remote_source_timeout_sec: int = 600
     remote_source_allowed_hosts: str | None = None
+    async_job_retention_sec: int = 3600
 
     model_config = {"env_prefix": "STT_"}
 

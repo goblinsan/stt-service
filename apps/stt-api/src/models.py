@@ -50,6 +50,21 @@ class TranscribeResult(BaseModel):
     speakers: list[SpeakerSummary] | None = None
 
 
+class AsyncJobAccepted(BaseModel):
+    job_id: str
+    status: str
+
+
+class AsyncJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    filename: str | None = None
+    result: TranscribeResult | None = None
+    error: str | None = None
+
+
 class DiarizationInfo(BaseModel):
     model: str
     ready: bool
