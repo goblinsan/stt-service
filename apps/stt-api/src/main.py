@@ -8,7 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .engine import get_device_info, get_diarize_model, get_model, is_model_loaded, transcribe_audio
-from .models import DiarizationInfo, HealthResponse, ModelInfo, TranscribeResult
+from .models import (
+    DiarizationInfo,
+    HealthResponse,
+    ModelInfo,
+    RemoteTranscribeRequest,
+    TranscribeResult,
+)
+from .remote_source import RemoteSourceError, download_remote_audio
 
 logger = logging.getLogger("stt.api")
 
@@ -34,7 +41,6 @@ async def startup():
         try:
             await asyncio.to_thread(get_model)
             logger.info("Whisper model warmup complete")
-            # If a separate diarize model is configured, warm it up too.
             if settings.diarize_whisper_model and settings.diarize_whisper_model != settings.model_size:
                 await asyncio.to_thread(get_diarize_model)
                 logger.info("Diarize Whisper model warmup complete (%s)", settings.diarize_whisper_model)
@@ -120,6 +126,11 @@ async def info():
         "model_loaded": is_model_loaded(),
         "gpu": gpu_info,
         "max_upload_mb": settings.max_upload_mb,
+        "remote_source": {
+            "enabled": True,
+            "allowed_hosts": settings.remote_source_allowed_hosts,
+            "timeout_sec": settings.remote_source_timeout_sec,
+        },
         "diarization": {
             "available": bool(settings.hf_token),
             "model": settings.pyannote_model,
@@ -128,6 +139,77 @@ async def info():
             "whisper_model_override": settings.diarize_whisper_model,
         },
     }
+
+
+def _validate_filename(filename: str) -> str:
+    if not filename:
+        raise HTTPException(400, "No filename provided")
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            400,
+            f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+        )
+    return ext
+
+
+def _validate_transcribe_options(task: str, diarize: bool):
+    if task not in ("transcribe", "translate"):
+        raise HTTPException(400, "task must be 'transcribe' or 'translate'")
+
+    if diarize and not settings.hf_token:
+        raise HTTPException(
+            422,
+            "Speaker diarization is not configured. "
+            "Set the STT_HF_TOKEN environment variable to enable it.",
+        )
+
+
+def _run_transcription(
+    tmp_path: str,
+    filename: str,
+    content_bytes: int,
+    language: str | None,
+    task: str,
+    word_timestamps: bool,
+    initial_prompt: str | None,
+    diarize: bool,
+    min_speakers: int | None,
+    max_speakers: int | None,
+) -> TranscribeResult:
+    logger.info(
+        "Transcribing %s (%d bytes, lang=%s, task=%s, diarize=%s, min_speakers=%s, max_speakers=%s)",
+        filename,
+        content_bytes,
+        language,
+        task,
+        diarize,
+        min_speakers,
+        max_speakers,
+    )
+    get_model()
+
+    result = transcribe_audio(
+        audio_path=tmp_path,
+        language=language if language else None,
+        task=task,
+        word_timestamps=word_timestamps,
+        initial_prompt=initial_prompt,
+        diarize=diarize,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+    )
+    logger.info(
+        "Done: %.1fs audio in %.1fs total (whisper=%.1fs%s), %.1fx realtime, lang=%s",
+        result.duration,
+        result.processing_time,
+        result.whisper_time or 0.0,
+        f", diarize={result.diarization_time:.1f}s" if result.diarization_time is not None else "",
+        result.duration / result.processing_time if result.processing_time > 0 else 0,
+        result.language,
+    )
+    return result
 
 
 @app.post("/api/transcribe", response_model=TranscribeResult)
@@ -141,28 +223,13 @@ async def transcribe(
     min_speakers: int | None = Form(None),
     max_speakers: int | None = Form(None),
 ):
-    if not file.filename:
-        raise HTTPException(400, "No filename provided")
+    _validate_transcribe_options(task, diarize)
 
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            400,
-            f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
-        )
-
-    if task not in ("transcribe", "translate"):
-        raise HTTPException(400, "task must be 'transcribe' or 'translate'")
-
-    if diarize and not settings.hf_token:
-        raise HTTPException(
-            422,
-            "Speaker diarization is not configured. "
-            "Set the STT_HF_TOKEN environment variable to enable it.",
-        )
+    filename = file.filename or ""
+    ext = _validate_filename(filename)
 
     content = await file.read()
-    if len(content) > settings.max_upload_mb * 1024 * 1024:
+    if len(content) > settings.max_upload_mb * _BYTES_PER_MB:
         raise HTTPException(413, f"File too large. Max {settings.max_upload_mb} MB")
 
     suffix = ext if ext else ".wav"
@@ -171,15 +238,11 @@ async def transcribe(
         tmp_path = tmp.name
 
     try:
-        logger.info(
-            "Transcribing %s (%d bytes, lang=%s, task=%s, diarize=%s, min_speakers=%s, max_speakers=%s)",
-            file.filename, len(content), language, task, diarize, min_speakers, max_speakers,
-        )
-        get_model()
-
-        result = transcribe_audio(
-            audio_path=tmp_path,
-            language=language if language else None,
+        return _run_transcription(
+            tmp_path=tmp_path,
+            filename=filename,
+            content_bytes=len(content),
+            language=language,
             task=task,
             word_timestamps=word_timestamps,
             initial_prompt=initial_prompt,
@@ -187,20 +250,52 @@ async def transcribe(
             min_speakers=min_speakers,
             max_speakers=max_speakers,
         )
-        logger.info(
-            "Done: %.1fs audio in %.1fs total (whisper=%.1fs%s), %.1fx realtime, lang=%s",
-            result.duration,
-            result.processing_time,
-            result.whisper_time or 0.0,
-            f", diarize={result.diarization_time:.1f}s" if result.diarization_time is not None else "",
-            result.duration / result.processing_time if result.processing_time > 0 else 0,
-            result.language,
-        )
-        return result
     except ValueError as e:
         raise HTTPException(422, str(e))
     except Exception as e:
         logger.exception("Transcription failed")
+        raise HTTPException(500, f"Transcription failed: {str(e)}")
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.post("/api/transcribe-from-url", response_model=TranscribeResult)
+async def transcribe_from_url(request: RemoteTranscribeRequest):
+    _validate_transcribe_options(request.task, request.diarize)
+
+    provisional_filename = request.filename or os.path.basename(request.source_url)
+    _validate_filename(provisional_filename)
+
+    try:
+        tmp_path, resolved_filename, total_bytes = await asyncio.to_thread(
+            download_remote_audio,
+            request.source_url,
+            request.filename,
+            settings.max_upload_mb * _BYTES_PER_MB,
+            settings.remote_source_timeout_sec,
+            settings.remote_source_allowed_hosts,
+        )
+        _validate_filename(resolved_filename)
+    except RemoteSourceError as e:
+        raise HTTPException(e.status_code, str(e))
+
+    try:
+        return _run_transcription(
+            tmp_path=tmp_path,
+            filename=resolved_filename,
+            content_bytes=total_bytes,
+            language=request.language,
+            task=request.task,
+            word_timestamps=request.word_timestamps,
+            initial_prompt=request.initial_prompt,
+            diarize=request.diarize,
+            min_speakers=request.min_speakers,
+            max_speakers=request.max_speakers,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        logger.exception("Remote transcription failed")
         raise HTTPException(500, f"Transcription failed: {str(e)}")
     finally:
         os.unlink(tmp_path)

@@ -7,6 +7,13 @@ class TranscribeRequest(BaseModel):
     word_timestamps: bool = Field(False, description="Include word-level timestamps")
     initial_prompt: str | None = Field(None, description="Optional prompt to condition the model")
     diarize: bool = Field(False, description="Run speaker diarization (requires STT_HF_TOKEN)")
+    min_speakers: int | None = Field(None, ge=1)
+    max_speakers: int | None = Field(None, ge=1)
+
+
+class RemoteTranscribeRequest(TranscribeRequest):
+    source_url: str = Field(..., description="Presigned HTTP(S) URL for the input audio")
+    filename: str | None = Field(None, description="Optional original filename for extension validation")
 
 
 class WordSegment(BaseModel):
