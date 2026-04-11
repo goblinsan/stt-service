@@ -31,6 +31,7 @@ export interface ServiceInfo {
   device: string;
   compute_type: string;
   model_loaded: boolean;
+  diarize_model_loaded: boolean;
   gpu: { name: string; vram_total_mb: number; vram_used_mb: number; vram_reserved_mb?: number } | null;
   max_upload_mb: number;
   diarization: {
@@ -46,6 +47,14 @@ export async function fetchInfo(): Promise<ServiceInfo> {
   const res = await fetch('/api/info');
   if (!res.ok) throw new Error(`Failed to fetch info: ${res.status}`);
   return res.json();
+}
+
+export async function unloadModels(): Promise<void> {
+  const res = await fetch('/api/models/unload', { method: 'POST' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || `Failed to unload models: ${res.status}`);
+  }
 }
 
 export async function transcribe(

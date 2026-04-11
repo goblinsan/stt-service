@@ -82,6 +82,12 @@ body {
   margin-bottom: 1rem;
 }
 
+.capability-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .capability-header h2 {
   margin: 0;
   font-size: 1rem;
@@ -107,6 +113,16 @@ body {
 .refresh-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.refresh-btn-danger {
+  border-color: rgba(143, 48, 48, 0.2);
+  color: var(--danger);
+}
+
+.refresh-btn-danger:hover:not(:disabled) {
+  border-color: rgba(143, 48, 48, 0.35);
+  background: rgba(143, 48, 48, 0.08);
 }
 
 .capability-grid {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchInfo, transcribe, type ServiceInfo, type TranscribeResult, type SpeakerSummary } from './api';
+import { fetchInfo, transcribe, unloadModels, type ServiceInfo, type TranscribeResult, type SpeakerSummary } from './api';
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -169,10 +169,14 @@ function ServiceCapabilities({
   info,
   refreshing,
   onRefresh,
+  unloading,
+  onUnload,
 }: {
   info: ServiceInfo;
   refreshing: boolean;
   onRefresh: () => void;
+  unloading: boolean;
+  onUnload: () => void;
 }) {
   return (
     <section className="capability-panel">
@@ -181,9 +185,14 @@ function ServiceCapabilities({
           <h2>Service Capabilities</h2>
           <p>Live readiness and GPU usage for this STT + diarization node.</p>
         </div>
-        <button type="button" className="refresh-btn" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh status'}
-        </button>
+        <div className="capability-actions">
+          <button type="button" className="refresh-btn" onClick={onRefresh} disabled={refreshing || unloading}>
+            {refreshing ? 'Refreshing…' : 'Refresh status'}
+          </button>
+          <button type="button" className="refresh-btn refresh-btn-danger" onClick={onUnload} disabled={refreshing || unloading}>
+            {unloading ? 'Releasing…' : 'Unload VRAM'}
+          </button>
+        </div>
       </div>
       <div className="capability-grid">
         <CapabilityCard
@@ -194,16 +203,16 @@ function ServiceCapabilities({
         />
         <CapabilityCard
           title="Whisper Model"
-          value={info.model_loaded ? 'Ready' : 'Loading'}
-          detail={info.model_loaded ? 'Transcription requests can run now.' : 'Background warmup is still in progress.'}
+          value={info.model_loaded ? 'Ready' : 'Unloaded / lazy'}
+          detail={info.model_loaded ? 'Transcription requests can run now.' : 'The next transcription request will reload Whisper.'}
           tone={info.model_loaded ? 'ready' : 'warn'}
         />
         <CapabilityCard
           title="Diarization"
-          value={!info.diarization.available ? 'Disabled' : info.diarization.ready ? 'Ready' : 'Lazy / warming'}
+          value={!info.diarization.available ? 'Disabled' : info.diarization.ready ? 'Ready' : 'Unloaded / lazy'}
           detail={!info.diarization.available
             ? 'Set STT_HF_TOKEN to enable pyannote speaker attribution.'
-            : `${info.diarization.model}${info.diarization.whisper_model_override ? ` · whisper override ${info.diarization.whisper_model_override}` : ''}`}
+            : `${info.diarization.model}${info.diarization.whisper_model_override ? ` · whisper override ${info.diarization.whisper_model_override}` : ''}${info.diarize_model_loaded ? ' · diarize whisper loaded' : ' · diarize whisper lazy'}`}
           tone={info.diarization.available && info.diarization.ready ? 'ready' : info.diarization.available ? 'warn' : 'neutral'}
         />
         <CapabilityCard
@@ -491,6 +500,7 @@ export function App() {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [infoBusy, setInfoBusy] = useState(false);
+  const [unloading, setUnloading] = useState(false);
   const [result, setResult] = useState<TranscribeResult | null>(null);
   const [error, setError] = useState('');
 
@@ -505,6 +515,23 @@ export function App() {
 
   useEffect(() => {
     loadInfo().catch(() => {});
+  }, [loadInfo]);
+
+  const handleUnload = useCallback(async () => {
+    setUnloading(true);
+    setError('');
+    setStatus('Releasing Whisper and diarization models from VRAM…');
+    try {
+      await unloadModels();
+      await loadInfo();
+      setStatus('VRAM released. The next request will reload models on demand.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      setStatus('');
+    } finally {
+      setUnloading(false);
+    }
   }, [loadInfo]);
 
   const handleFile = useCallback((nextFile: File) => {
@@ -569,7 +596,13 @@ export function App() {
 
       <main className="app-main">
         {info && (
-          <ServiceCapabilities info={info} refreshing={infoBusy} onRefresh={() => { void loadInfo(); }} />
+          <ServiceCapabilities
+            info={info}
+            refreshing={infoBusy}
+            onRefresh={() => { void loadInfo(); }}
+            unloading={unloading}
+            onUnload={() => { void handleUnload(); }}
+          />
         )}
 
         <DropZone onFile={handleFile} disabled={busy} />

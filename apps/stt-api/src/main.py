@@ -7,7 +7,15 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .engine import get_device_info, get_diarize_model, get_model, is_model_loaded, transcribe_audio
+from .engine import (
+    get_device_info,
+    get_diarize_model,
+    get_model,
+    is_diarize_model_loaded,
+    is_model_loaded,
+    transcribe_audio,
+    unload_models,
+)
 from .models import (
     AsyncJobAccepted,
     AsyncJobStatusResponse,
@@ -41,6 +49,12 @@ async def startup():
     logger.info("STT API starting — warming up models in background")
 
     async def _load_whisper():
+        if not settings.warmup_whisper:
+            logger.info(
+                "Whisper warmup disabled (STT_WARMUP_WHISPER=false) — "
+                "model will load lazily on first request"
+            )
+            return
         try:
             await asyncio.to_thread(get_model)
             logger.info("Whisper model warmup complete")
@@ -127,6 +141,7 @@ async def info():
         "device": device,
         "compute_type": compute_type,
         "model_loaded": is_model_loaded(),
+        "diarize_model_loaded": is_diarize_model_loaded(),
         "gpu": gpu_info,
         "max_upload_mb": settings.max_upload_mb,
         "remote_source": {
@@ -141,6 +156,20 @@ async def info():
             "idle_timeout_sec": settings.pyannote_idle_timeout_sec,
             "whisper_model_override": settings.diarize_whisper_model,
         },
+    }
+
+
+@app.post("/api/models/unload")
+async def unload_loaded_models():
+    from .diarization import unload_pipeline
+
+    unload_models()
+    unload_pipeline()
+    return {
+        "ok": True,
+        "model_loaded": is_model_loaded(),
+        "diarize_model_loaded": is_diarize_model_loaded(),
+        "diarization_ready": False,
     }
 
 

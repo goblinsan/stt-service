@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Pre-warm the pyannote pipeline at startup.  Disable to save VRAM until
     # the first diarize request arrives (lazy-load strategy).
     warmup_pyannote: bool = True
+    # Pre-warm the primary Whisper model at startup. Disable to keep VRAM free
+    # until the first transcription request arrives.
+    warmup_whisper: bool = True
     # Remote-source ingest for large presigned uploads.
     remote_source_timeout_sec: int = 600
     remote_source_allowed_hosts: str | None = None

@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import gc
 from pathlib import Path
 
 from faster_whisper import WhisperModel
@@ -116,6 +117,45 @@ def get_diarize_model() -> WhisperModel:
 
 def is_model_loaded() -> bool:
     return _model is not None
+
+
+def is_diarize_model_loaded() -> bool:
+    diarize_size = settings.diarize_whisper_model
+    if not diarize_size or diarize_size == settings.model_size:
+        return is_model_loaded()
+    return _diarize_model is not None
+
+
+def _release_cuda_memory() -> None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        logger.debug("CUDA cache release skipped", exc_info=True)
+
+
+def unload_models() -> None:
+    """Release loaded Whisper models so the next request reloads them lazily."""
+    global _model, _diarize_model
+
+    with _inference_lock:
+        with _model_lock:
+            primary = _model
+            _model = None
+        with _diarize_model_lock:
+            secondary = _diarize_model
+            _diarize_model = None
+
+        if primary is not None or secondary is not None:
+            logger.info("Unloading Whisper models to free VRAM")
+
+        del primary
+        del secondary
+        gc.collect()
+        _release_cuda_memory()
 
 
 def get_device_info() -> tuple[str, str]:
