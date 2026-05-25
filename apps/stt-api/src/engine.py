@@ -35,6 +35,15 @@ _diarize_model_lock = threading.Lock()
 
 _inference_lock = threading.Lock()
 
+# Idle-unload reaper state (issue: shared-GPU nodes need to release Whisper
+# VRAM between transcription bursts, mirroring the pyannote pattern in
+# diarization.py).  ``_last_used`` is the monotonic timestamp of the most
+# recent Whisper inference; the reaper thread wakes periodically and calls
+# ``unload_models()`` once the configured idle threshold is exceeded.
+_last_used: float = 0.0
+_reaper_thread: threading.Thread | None = None
+_reaper_lock = threading.Lock()
+
 
 def _resolve_device() -> tuple[str, str]:
     device = settings.device
@@ -82,6 +91,7 @@ def get_model() -> WhisperModel:
         if _model is not None:
             return _model
         _model = _load_whisper(settings.model_size)
+        _ensure_whisper_reaper()
         return _model
 
 
@@ -112,6 +122,7 @@ def get_diarize_model() -> WhisperModel:
             diarize_size, settings.model_size,
         )
         _diarize_model = _load_whisper(diarize_size)
+        _ensure_whisper_reaper()
         return _diarize_model
 
 
@@ -156,6 +167,59 @@ def unload_models() -> None:
         del secondary
         gc.collect()
         _release_cuda_memory()
+
+
+def _whisper_reaper(idle_timeout_sec: int) -> None:
+    """Background thread: unload Whisper models after the idle threshold."""
+    global _last_used
+    # Match the pyannote reaper cadence: wake at most every 10 s but no less
+    # often than 1/6th of the timeout so we never miss the deadline by more
+    # than ~17%.
+    _REAPER_MIN_SLEEP_SEC = 10
+    _REAPER_FRACTION = 6
+    sleep_sec = max(
+        _REAPER_MIN_SLEEP_SEC, idle_timeout_sec // _REAPER_FRACTION
+    )
+    while True:
+        time.sleep(sleep_sec)
+        try:
+            if not is_model_loaded() and not is_diarize_model_loaded():
+                continue
+            idle = time.monotonic() - _last_used
+            if idle >= idle_timeout_sec:
+                logger.info(
+                    "Whisper idle for %.0fs (limit %ds) — unloading to free VRAM",
+                    idle, idle_timeout_sec,
+                )
+                unload_models()
+        except Exception:
+            logger.exception("Whisper reaper iteration failed; continuing")
+
+
+def _ensure_whisper_reaper() -> None:
+    """Start the Whisper idle-unload daemon thread on first successful load.
+
+    No-op when ``STT_WHISPER_IDLE_TIMEOUT_SEC`` is 0 (disabled) or the
+    reaper is already running.
+    """
+    global _reaper_thread
+    timeout = settings.whisper_idle_timeout_sec
+    if timeout <= 0:
+        return
+    with _reaper_lock:
+        if _reaper_thread is not None and _reaper_thread.is_alive():
+            return
+        t = threading.Thread(
+            target=_whisper_reaper,
+            args=(timeout,),
+            daemon=True,
+            name="whisper-reaper",
+        )
+        t.start()
+        _reaper_thread = t
+        logger.info(
+            "Whisper idle-unload reaper started (timeout=%ds)", timeout,
+        )
 
 
 def get_device_info() -> tuple[str, str]:
@@ -226,6 +290,11 @@ def transcribe_audio(
                 )
             )
             full_text_parts.append(seg.text.strip())
+
+    # Bump idle-unload timestamp; the reaper (when configured) reads this
+    # to decide when to drop the Whisper model(s) from VRAM.
+    global _last_used
+    _last_used = time.monotonic()
 
     whisper_time = round(time.monotonic() - t0, 3)
     vram_after_whisper = _vram_used_mb()

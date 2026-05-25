@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # Seconds of inactivity before the pyannote pipeline is unloaded to free
     # VRAM.  Set to 0 to never unload (legacy behaviour).
     pyannote_idle_timeout_sec: int = 300
+    # Seconds of inactivity before the Whisper models (primary and any
+    # diarize-specific override) are unloaded to free VRAM.  Mirrors the
+    # pyannote idle pattern above so the entire STT footprint can be
+    # collapsed on shared-GPU nodes between transcription bursts.  Set to 0
+    # to never unload (legacy behaviour).
+    whisper_idle_timeout_sec: int = 0
     # Pre-warm the pyannote pipeline at startup.  Disable to save VRAM until
     # the first diarize request arrives (lazy-load strategy).
     warmup_pyannote: bool = True
